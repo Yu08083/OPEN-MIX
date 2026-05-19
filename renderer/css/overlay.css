@@ -1,32 +1,36 @@
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(242, 239, 231, 0.92);
+  background: rgba(236, 233, 223, 0.92);
   display: none;
   align-items: center;
   justify-content: center;
   z-index: 100;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--ink);
+  backdrop-filter: blur(3px);
 }
 .overlay.active { display: flex; }
 
 .overlay-box {
   background: var(--paper);
   border: 1px solid var(--ink);
-  padding: 24px 36px;
+  padding: 28px 40px;
   text-align: center;
+  border-radius: 2px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
 .overlay-progress {
-  margin-top: 14px;
-  width: 200px;
-  height: 2px;
+  margin-top: 16px;
+  width: 240px;
+  height: 4px;
   background: var(--line);
   position: relative;
   overflow: hidden;
+  border-radius: 2px;
 }
 .overlay-progress-fill {
   position: absolute;

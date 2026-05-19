@@ -332,3 +332,185 @@ export async function correctPitchRange(buffer, startSec, endSec, options, progr
   }
   ctx.close();
 }
+
+export function segmentPitchCurve(curve, minDurationSec) {
+  if (minDurationSec === undefined) minDurationSec = 0.08;
+  const segments = [];
+  let current = null;
+  for (const point of curve) {
+    if (point.freq <= 0) {
+      if (current && (current.endTime - current.startTime) >= minDurationSec) {
+        segments.push(current);
+      }
+      current = null;
+      continue;
+    }
+    const midi = freqToMidi(point.freq);
+    if (!current) {
+      current = { startTime: point.time, endTime: point.time, midiSum: midi, count: 1 };
+    } else {
+      const avgMidi = current.midiSum / current.count;
+      if (Math.abs(midi - avgMidi) > 1.5) {
+        if ((current.endTime - current.startTime) >= minDurationSec) segments.push(current);
+        current = { startTime: point.time, endTime: point.time, midiSum: midi, count: 1 };
+      } else {
+        current.endTime = point.time;
+        current.midiSum += midi;
+        current.count++;
+      }
+    }
+  }
+  if (current && (current.endTime - current.startTime) >= minDurationSec) {
+    segments.push(current);
+  }
+  return segments.map(s => {
+    const detectedMidi = s.midiSum / s.count;
+    return {
+      startTime: s.startTime,
+      endTime: s.endTime,
+      detectedMidi,
+      targetMidi: Math.round(detectedMidi),
+      manuallyEdited: false,
+    };
+  });
+}
+
+export function snapMidiToScale(midiFloat, key, scaleId) {
+  const SCALES = {
+    chromatic: [0,1,2,3,4,5,6,7,8,9,10,11],
+    major: [0,2,4,5,7,9,11],
+    minor: [0,2,3,5,7,8,10],
+    pentatonic_major: [0,2,4,7,9],
+    pentatonic_minor: [0,3,5,7,10],
+  };
+  const scale = SCALES[scaleId] || SCALES.chromatic;
+  const rounded = Math.round(midiFloat);
+  let best = rounded;
+  let bestDist = Infinity;
+  for (let offset = -6; offset <= 6; offset++) {
+    const candidate = rounded + offset;
+    const cls = ((candidate - key) % 12 + 12) % 12;
+    if (scale.indexOf(cls) >= 0) {
+      const dist = Math.abs(midiFloat - candidate);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = candidate;
+      }
+    }
+  }
+  return best;
+}
+
+export async function correctPitchWithNotes(buffer, notes, options, progressCb) {
+  const { strength = 1 } = options;
+  const sr = buffer.sampleRate;
+  const numCh = buffer.numberOfChannels;
+  const length = buffer.length;
+  const fftSize = 2048;
+  const hop = fftSize >> 2;
+  const half = fftSize >> 1;
+  const win = hannWindow(fftSize);
+
+  const sortedNotes = [...notes].sort((a, b) => a.startTime - b.startTime);
+  const findNoteAt = time => {
+    for (const n of sortedNotes) {
+      if (time >= n.startTime && time <= n.endTime) return n;
+    }
+    return null;
+  };
+
+  const inputs = [];
+  const outputs = [];
+  for (let c = 0; c < numCh; c++) {
+    inputs.push(buffer.getChannelData(c));
+    outputs.push(new Float32Array(length));
+  }
+  const normalize = new Float32Array(length);
+  const numFrames = Math.max(0, Math.floor((length - fftSize) / hop));
+  const prevInPhase = [];
+  const accumOutPhase = [];
+  for (let c = 0; c < numCh; c++) {
+    prevInPhase.push(new Float32Array(half));
+    accumOutPhase.push(new Float32Array(half));
+  }
+  const mag = new Float32Array(half);
+  const trueOmega = new Float32Array(half);
+
+  for (let frame = 0; frame < numFrames; frame++) {
+    const start = frame * hop;
+    const time = (start + fftSize / 2) / sr;
+    const det = inputs[0].subarray(start, start + fftSize);
+    const freq = yinDetect(det, sr);
+    const note = findNoteAt(time);
+    let ratio = 1;
+    if (note && freq > 0) {
+      const target = midiToFreq(note.targetMidi);
+      ratio = 1 + strength * (target / freq - 1);
+    }
+
+    for (let c = 0; c < numCh; c++) {
+      const re = new Float32Array(fftSize);
+      const im = new Float32Array(fftSize);
+      for (let i = 0; i < fftSize; i++) re[i] = inputs[c][start + i] * win[i];
+
+      if (Math.abs(ratio - 1) > 0.001) {
+        fft(re, im);
+        for (let k = 1; k < half; k++) {
+          mag[k] = Math.sqrt(re[k] * re[k] + im[k] * im[k]);
+          const phase = Math.atan2(im[k], re[k]);
+          const omega = 2 * Math.PI * k / fftSize;
+          const expected = omega * hop;
+          const diff = wrapPhase(phase - prevInPhase[c][k] - expected);
+          trueOmega[k] = omega + diff / hop;
+          prevInPhase[c][k] = phase;
+        }
+        const outRe = new Float32Array(fftSize);
+        const outIm = new Float32Array(fftSize);
+        for (let kOut = 1; kOut < half; kOut++) {
+          const kInFloat = kOut / ratio;
+          const kIn = Math.floor(kInFloat);
+          if (kIn < 1 || kIn + 1 >= half) continue;
+          const frac = kInFloat - kIn;
+          const m = mag[kIn] * (1 - frac) + mag[kIn + 1] * frac;
+          if (m < 1e-10) continue;
+          const tOm = trueOmega[kIn] * (1 - frac) + trueOmega[kIn + 1] * frac;
+          const shiftedOm = tOm * ratio;
+          accumOutPhase[c][kOut] = wrapPhase(accumOutPhase[c][kOut] + shiftedOm * hop);
+          outRe[kOut] = m * Math.cos(accumOutPhase[c][kOut]);
+          outIm[kOut] = m * Math.sin(accumOutPhase[c][kOut]);
+        }
+        outRe[0] = re[0];
+        for (let k = 1; k < half; k++) {
+          outRe[fftSize - k] = outRe[k];
+          outIm[fftSize - k] = -outIm[k];
+        }
+        ifft(outRe, outIm);
+        for (let i = 0; i < fftSize; i++) outputs[c][start + i] += outRe[i] * win[i];
+      } else {
+        for (let i = 0; i < fftSize; i++) outputs[c][start + i] += re[i] * win[i];
+      }
+    }
+    for (let i = 0; i < fftSize; i++) normalize[start + i] += win[i] * win[i];
+    if (frame % 25 === 0 && progressCb) {
+      progressCb(frame / numFrames);
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+  for (let c = 0; c < numCh; c++) {
+    for (let i = 0; i < length; i++) {
+      if (normalize[i] > 1e-6) outputs[c][i] /= normalize[i];
+    }
+  }
+  if (progressCb) progressCb(1);
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const newBuf = ctx.createBuffer(numCh, length, sr);
+  for (let c = 0; c < numCh; c++) newBuf.copyToChannel(outputs[c], c);
+  ctx.close();
+  return newBuf;
+}
+
+export function midiToNoteName(midi) {
+  const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const octave = Math.floor(midi / 12) - 1;
+  return names[((midi % 12) + 12) % 12] + octave;
+}

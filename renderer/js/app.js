@@ -156,14 +156,14 @@ export class App {
     const trimStartX = (track.trimStart / totalDur) * w;
     const trimEndX = w - (track.trimEnd / totalDur) * w;
 
-    ctx.fillStyle = track.color + '18';
+    ctx.fillStyle = track.color + '30';
     const step = w / peaks.length;
     for (let i = 0; i < peaks.length; i++) {
       const amp = peaks[i] * (mid * 0.9);
       ctx.fillRect(i * step, mid - amp, Math.max(0.5, step), amp * 2);
     }
 
-    ctx.fillStyle = track.color + '55';
+    ctx.fillStyle = track.color;
     const sStart = Math.max(0, Math.floor(trimStartX / step));
     const sEnd = Math.min(peaks.length, Math.ceil(trimEndX / step));
     for (let i = sStart; i < sEnd; i++) {
@@ -172,13 +172,38 @@ export class App {
     }
 
     if (track.trimStart > 0) {
-      ctx.fillStyle = 'rgba(26,26,26,0.18)';
+      ctx.fillStyle = 'rgba(26,26,26,0.22)';
       ctx.fillRect(0, 0, trimStartX, h);
     }
     if (track.trimEnd > 0) {
-      ctx.fillStyle = 'rgba(26,26,26,0.18)';
+      ctx.fillStyle = 'rgba(26,26,26,0.22)';
       ctx.fillRect(trimEndX, 0, w - trimEndX, h);
     }
+  }
+
+  getGlobalDuration() {
+    let max = 5;
+    for (const t of this.engine.tracks) {
+      const end = t.offset + t.effectiveDuration();
+      if (end > max) max = end;
+    }
+    return max + 2;
+  }
+
+  layoutTrackClip(track) {
+    if (!track.el || !track.buffer) return;
+    const clip = track.el.querySelector('.track-clip');
+    if (!clip) return;
+    const globalDur = this.getGlobalDuration();
+    const eff = track.effectiveDuration();
+    const leftPct = (track.offset / globalDur) * 100;
+    const widthPct = Math.max(2, (eff / globalDur) * 100);
+    clip.style.left = leftPct + '%';
+    clip.style.width = widthPct + '%';
+  }
+
+  layoutAllClips() {
+    this.engine.tracks.forEach(t => this.layoutTrackClip(t));
   }
 
   refreshAll() {
@@ -188,6 +213,7 @@ export class App {
     const has = this.engine.tracks.length > 0;
     document.getElementById('btn-export').disabled = !has;
     document.getElementById('btn-save-project').disabled = !has;
+    this.layoutAllClips();
     this.engine.tracks.forEach((t, i) => {
       if (t.el) {
         t.el.querySelector('.track-num').textContent = `CH ${String(i + 1).padStart(2, '0')}`;

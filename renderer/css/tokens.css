@@ -1,18 +1,31 @@
 :root {
-  --bg: #F2EFE7;
+  --bg: #ECE9DF;
   --paper: #FAF8F2;
-  --paper-deep: #F5F1E6;
+  --paper-deep: #F2EEDF;
+  --paper-deeper: #E8E4D2;
   --ink: #1A1A1A;
-  --ink-soft: #4A4A47;
-  --ink-faint: #9D9A92;
-  --line: #D8D3C5;
-  --line-soft: #E8E4D8;
+  --ink-soft: #2C2C29;
+  --ink-mid: #5A554C;
+  --ink-faint: #8A857A;
+  --line: #C0B9A5;
+  --line-soft: #D8D2BD;
   --accent: #0550C2;
+  --accent-hover: #043E96;
   --accent-soft: #C9D8F0;
+  --accent-faint: rgba(5, 80, 194, 0.08);
   --warn: #B8841F;
   --green: #5A7A4F;
+  --danger: #B8451F;
 
   --font-serif: 'EB Garamond', 'Noto Serif JP', serif;
   --font-mono: 'JetBrains Mono', 'Courier New', monospace;
   --font-sans: 'Noto Sans JP', system-ui, sans-serif;
+
+  --fs-xxs: 10px;
+  --fs-xs:  11px;
+  --fs-sm:  12px;
+  --fs-base: 13px;
+  --fs-md:  14px;
+  --fs-lg:  16px;
+  --fs-xl:  20px;
 }

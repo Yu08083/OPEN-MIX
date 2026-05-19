@@ -4,40 +4,65 @@ body {
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: 1.45;
   min-height: 100vh;
-  padding: 24px;
-  background-image:
-    radial-gradient(circle at 20% 10%, rgba(200,71,43,0.025) 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, rgba(26,26,26,0.03) 0%, transparent 50%);
+  padding: 20px;
 }
 
-.app { max-width: 1280px; margin: 0 auto; }
+.app { max-width: 1320px; margin: 0 auto; }
 
 .slider {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 2px;
+  height: 4px;
   background: var(--line);
   outline: none;
   cursor: pointer;
+  border-radius: 2px;
 }
 .slider::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   background: var(--ink);
   cursor: pointer;
+  border-radius: 50%;
   border: 2px solid var(--paper);
   box-shadow: 0 0 0 1px var(--ink);
 }
 .slider::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   background: var(--ink);
   cursor: pointer;
+  border-radius: 50%;
   border: 2px solid var(--paper);
   box-shadow: 0 0 0 1px var(--ink);
+}
+.slider:focus::-webkit-slider-thumb { background: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+.editable-value {
+  cursor: text;
+  padding: 1px 4px;
+  border-radius: 2px;
+  transition: background .12s;
+  user-select: none;
+}
+.editable-value:hover { background: var(--accent-faint); }
+.editable-value-input {
+  font-family: var(--font-mono);
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  background: var(--paper);
+  border: 1px solid var(--accent);
+  padding: 1px 4px;
+  border-radius: 2px;
+  width: 60px;
+  outline: none;
+  text-align: right;
 }
 
 .footer {
@@ -46,11 +71,9 @@ body {
   border-top: 1px solid var(--line);
   display: flex;
   justify-content: space-between;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--ink-faint);
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  color: var(--ink-mid);
 }
 
 @media (max-width: 900px) {

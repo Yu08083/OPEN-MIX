@@ -2,8 +2,8 @@
   display: none;
   grid-column: 1 / -1;
   background: var(--paper-deep);
-  border-top: 1px solid var(--line-soft);
-  padding: 14px 18px;
+  border-top: 1px solid var(--line);
+  padding: 18px 20px;
 }
 .track.fx-open .fx-rack {
   display: grid;
@@ -14,45 +14,52 @@
 .fx-module {
   border: 1px solid var(--line);
   background: var(--paper);
-  padding: 10px 12px;
+  padding: 12px 14px;
+  border-radius: 2px;
 }
 
 .fx-header {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--line-soft);
 }
-.fx-name { font-family: var(--font-serif); font-size: 13px; font-weight: 500; }
+.fx-name {
+  font-family: var(--font-sans);
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--ink);
+}
 .fx-tag {
   font-family: var(--font-mono);
-  font-size: 8px;
-  letter-spacing: 0.3em;
-  color: var(--ink-faint);
-  text-transform: uppercase;
+  font-size: var(--fs-xs);
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.1em;
 }
 
 .fx-param {
   display: grid;
-  grid-template-columns: 44px 1fr 50px;
-  gap: 4px;
+  grid-template-columns: 60px 1fr 56px;
+  gap: 8px;
   align-items: center;
-  margin-bottom: 4px;
-  font-family: var(--font-mono);
-  font-size: 9px;
+  margin-bottom: 6px;
 }
 .fx-param > span:first-child {
-  color: var(--ink-faint);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  color: var(--ink-soft);
+  font-size: var(--fs-sm);
+  font-weight: 500;
 }
 .fx-param > span:last-child {
   text-align: right;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 10px;
-  font-weight: 500;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--ink);
 }
 
 @media (max-width: 900px) {

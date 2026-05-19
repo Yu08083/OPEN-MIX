@@ -16,7 +16,10 @@ export function appendTrackView(app, track) {
   bindTrackEvents(app, track, el);
   const pluginContainer = el.querySelector('.plugin-chain');
   if (pluginContainer) renderPluginChain(app, track, pluginContainer);
-  requestAnimationFrame(() => app.drawWave(track));
+  requestAnimationFrame(() => {
+    app.layoutAllClips();
+    app.engine.tracks.forEach(t => { if (t.el) app.drawWave(t); });
+  });
 }
 
 function trackTemplate(track, index) {
@@ -42,19 +45,24 @@ function trackTemplate(track, index) {
       <div class="track-meter"><div class="track-meter-fill"></div></div>
       <div class="section-toggle edit-toggle"><span>編集</span><span class="chevron">›</span></div>
       <div class="edit-rack">
-        ${faderRow('オフセット', 'offset', 0, 60, 0.01, track.offset, track.offset.toFixed(2) + 's')}
-        ${faderRow('始端カット', 'trimStart', 0, Math.max(0, dur - 0.1), 0.01, track.trimStart, track.trimStart.toFixed(2) + 's')}
-        ${faderRow('終端カット', 'trimEnd', 0, Math.max(0, dur - 0.1), 0.01, track.trimEnd, track.trimEnd.toFixed(2) + 's')}
-        ${faderRow('フェードイン', 'fadeIn', 0, 10, 0.01, track.fadeIn, track.fadeIn.toFixed(2) + 's')}
-        ${faderRow('フェードアウト', 'fadeOut', 0, 10, 0.01, track.fadeOut, track.fadeOut.toFixed(2) + 's')}
+        ${faderRow('オフセット', 'offset', 0, 60, 0.001, track.offset, track.offset.toFixed(3) + 's')}
+        ${faderRow('始端カット', 'trimStart', 0, Math.max(0, dur - 0.1), 0.001, track.trimStart, track.trimStart.toFixed(3) + 's')}
+        ${faderRow('終端カット', 'trimEnd', 0, Math.max(0, dur - 0.1), 0.001, track.trimEnd, track.trimEnd.toFixed(3) + 's')}
+        ${faderRow('フェードイン', 'fadeIn', 0, 10, 0.001, track.fadeIn, track.fadeIn.toFixed(3) + 's')}
+        ${faderRow('フェードアウト', 'fadeOut', 0, 10, 0.001, track.fadeOut, track.fadeOut.toFixed(3) + 's')}
       </div>
       <div class="section-toggle fx-toggle"><span>エフェクト</span><span class="chevron">›</span></div>
     </div>
     <div class="track-wave-wrap">
       <span class="track-offset-display">${offsetLabel(track)}</span>
       <div class="selection-toolbar"></div>
-      <canvas class="track-wave-canvas"></canvas>
-      <div class="selection-overlay"></div>
+      <div class="track-clip" style="border-color:${track.color}; background:${track.color}1A">
+        <div class="clip-header" title="ドラッグして位置を変更">
+          <span class="clip-name">${escapeHtml(track.name)}</span>
+        </div>
+        <canvas class="track-wave-canvas"></canvas>
+        <div class="selection-overlay"></div>
+      </div>
     </div>
     <div class="fx-rack">
       ${fxModule('ハイパスフィルタ', 'HPF', [
@@ -124,6 +132,8 @@ function bindTrackEvents(app, track, el) {
 
   el.querySelector('.track-name').addEventListener('input', e => {
     track.name = e.target.value;
+    const clipName = el.querySelector('.clip-name');
+    if (clipName) clipName.textContent = track.name;
   });
 
   el.querySelector('.track-delete').addEventListener('click', () => {
@@ -159,15 +169,15 @@ function bindTrackEvents(app, track, el) {
         track.panNode.pan.value = v;
         disp.textContent = panLabel(v);
       } else if (p === 'offset') {
-        disp.textContent = v.toFixed(2) + 's';
+        disp.textContent = v.toFixed(3) + 's';
         el.querySelector('.track-offset-display').textContent = offsetLabel(track);
         app.refreshAll();
       } else if (p === 'trimStart' || p === 'trimEnd') {
-        disp.textContent = v.toFixed(2) + 's';
+        disp.textContent = v.toFixed(3) + 's';
         el.querySelector('.track-offset-display').textContent = offsetLabel(track);
         app.refreshAll();
       } else if (p === 'fadeIn' || p === 'fadeOut') {
-        disp.textContent = v.toFixed(2) + 's';
+        disp.textContent = v.toFixed(3) + 's';
       }
     });
   });
@@ -181,6 +191,11 @@ function bindTrackEvents(app, track, el) {
       applyFxParam(track, fx, v);
       disp.textContent = formatFxDisplay(fx, v);
     });
+  });
+
+  el.querySelectorAll('[data-d], [data-fxd]').forEach(disp => {
+    disp.classList.add('editable-value');
+    disp.addEventListener('click', e => attachValueEditor(e.currentTarget, el));
   });
 
   el.querySelector('.fx-toggle').addEventListener('click', () => {
@@ -197,8 +212,12 @@ function bindTrackEvents(app, track, el) {
 
 function bindWaveformInteraction(app, track, el) {
   const waveWrap = el.querySelector('.track-wave-wrap');
+  const clip = el.querySelector('.track-clip');
+  const clipHeader = el.querySelector('.clip-header');
   const overlay = el.querySelector('.selection-overlay');
   const toolbar = el.querySelector('.selection-toolbar');
+
+  bindClipDrag(app, track, clipHeader);
 
   let downX = null;
   let downTime = null;
@@ -206,14 +225,15 @@ function bindWaveformInteraction(app, track, el) {
   const DRAG_THRESHOLD = 5;
 
   const xToTime = clientX => {
-    const rect = waveWrap.getBoundingClientRect();
+    const rect = clip.getBoundingClientRect();
     const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
     return (x / rect.width) * track.buffer.duration;
   };
 
-  waveWrap.addEventListener('mousedown', e => {
+  clip.addEventListener('mousedown', e => {
     if (e.button !== 0) return;
     if (e.target.closest('.selection-toolbar')) return;
+    if (e.target.closest('.clip-header')) return;
     downX = e.clientX;
     downTime = xToTime(e.clientX);
     dragging = false;
@@ -251,6 +271,43 @@ function bindWaveformInteraction(app, track, el) {
     const op = btn.dataset.op;
     await runSelectionOp(app, track, op);
     updateSelectionUI(track, overlay, toolbar);
+  });
+}
+
+function bindClipDrag(app, track, clipHeader) {
+  if (!clipHeader) return;
+  clipHeader.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    app.selectTrack(track);
+
+    const wrap = track.el.querySelector('.track-wave-wrap');
+    const wrapRect = wrap.getBoundingClientRect();
+    const globalDur = app.getGlobalDuration();
+    const startX = e.clientX;
+    const startOffset = track.offset;
+
+    const onMove = me => {
+      const dx = me.clientX - startX;
+      const dt = (dx / wrapRect.width) * globalDur;
+      let newOffset = Math.max(0, startOffset + dt);
+      track.offset = newOffset;
+      app.layoutAllClips();
+      const slider = track.el.querySelector('[data-p="offset"]');
+      if (slider) slider.value = track.offset;
+      const disp = track.el.querySelector('[data-d="offset"]');
+      if (disp) disp.textContent = track.offset.toFixed(3) + 's';
+      const offsetDisp = track.el.querySelector('.track-offset-display');
+      if (offsetDisp) offsetDisp.textContent = offsetLabel(track);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      app.refreshAll();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   });
 }
 
@@ -332,6 +389,53 @@ async function runSelectionOp(app, track, op) {
   }
 }
 
+function attachValueEditor(disp, rootEl) {
+  const key = disp.dataset.d || disp.dataset.fxd;
+  if (!key) return;
+  const slider = rootEl.querySelector(`[data-p="${key}"], [data-fx="${key}"]`);
+  if (!slider) return;
+  const min = parseFloat(slider.min);
+  const max = parseFloat(slider.max);
+  const step = parseFloat(slider.step);
+  const decimals = step < 0.001 ? 4 : (step < 0.01 ? 3 : (step < 0.1 ? 2 : (step < 1 ? 1 : 0)));
+  const currentValue = parseFloat(slider.value);
+
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.value = currentValue.toFixed(decimals);
+  input.min = min;
+  input.max = max;
+  input.step = step;
+  input.className = 'editable-value-input';
+
+  disp.style.display = 'none';
+  disp.parentNode.insertBefore(input, disp.nextSibling);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = () => {
+    if (done) return; done = true;
+    let v = parseFloat(input.value);
+    if (isNaN(v)) v = currentValue;
+    v = Math.max(min, Math.min(max, v));
+    slider.value = v;
+    slider.dispatchEvent(new Event('input'));
+    input.remove();
+    disp.style.display = '';
+  };
+  const cancel = () => {
+    if (done) return; done = true;
+    input.remove();
+    disp.style.display = '';
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+}
+
 function applyFxParam(track, fx, v) {
   if (!track.hpf) return;
   switch (fx) {
@@ -387,11 +491,11 @@ export function refreshTrackUIValues(track) {
 
   setSliderAndDisp('gain', track.gain, gainToDb(track.gain));
   setSliderAndDisp('pan', track.pan, panLabel(track.pan));
-  setSliderAndDisp('offset', track.offset, track.offset.toFixed(2) + 's');
-  setSliderAndDisp('trimStart', track.trimStart, track.trimStart.toFixed(2) + 's');
-  setSliderAndDisp('trimEnd', track.trimEnd, track.trimEnd.toFixed(2) + 's');
-  setSliderAndDisp('fadeIn', track.fadeIn, track.fadeIn.toFixed(2) + 's');
-  setSliderAndDisp('fadeOut', track.fadeOut, track.fadeOut.toFixed(2) + 's');
+  setSliderAndDisp('offset', track.offset, track.offset.toFixed(3) + 's');
+  setSliderAndDisp('trimStart', track.trimStart, track.trimStart.toFixed(3) + 's');
+  setSliderAndDisp('trimEnd', track.trimEnd, track.trimEnd.toFixed(3) + 's');
+  setSliderAndDisp('fadeIn', track.fadeIn, track.fadeIn.toFixed(3) + 's');
+  setSliderAndDisp('fadeOut', track.fadeOut, track.fadeOut.toFixed(3) + 's');
 
   setFxSliderAndDisp('hpfFreq', track.hpfFreq, `${Math.round(track.hpfFreq)} Hz`);
   setFxSliderAndDisp('eqLow', track.eqLow, `${track.eqLow.toFixed(1)} dB`);

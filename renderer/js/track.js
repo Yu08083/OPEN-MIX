@@ -600,4 +600,51 @@ export class Track {
     this.peaks = null;
     this.pitchCorrected = true;
   }
+
+  async applyPitchToRangeWithNotes(start, end, notes, options, progressCb) {
+    if (!this.buffer) return;
+    const { correctPitchWithNotes } = await import('./pitch.js');
+    const sr = this.buffer.sampleRate;
+    const numCh = this.buffer.numberOfChannels;
+    const startSample = Math.max(0, Math.floor(start * sr));
+    const endSample = Math.min(this.buffer.length, Math.floor(end * sr));
+    const rangeLen = endSample - startSample;
+    if (rangeLen < 2048) return;
+    const padSamples = Math.min(4096, startSample, this.buffer.length - endSample);
+    const subLen = rangeLen + padSamples * 2;
+    const subStart = startSample - padSamples;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const subBuf = ctx.createBuffer(numCh, subLen, sr);
+    for (let c = 0; c < numCh; c++) {
+      const src = this.buffer.getChannelData(c);
+      const dst = subBuf.getChannelData(c);
+      for (let i = 0; i < subLen; i++) dst[i] = src[subStart + i];
+    }
+    const offsetTime = subStart / sr;
+    const shiftedNotes = notes.map(n => ({
+      startTime: n.startTime - offsetTime,
+      endTime: n.endTime - offsetTime,
+      targetMidi: n.targetMidi,
+      detectedMidi: n.detectedMidi,
+    }));
+    const correctedSub = await correctPitchWithNotes(subBuf, shiftedNotes, options, progressCb);
+    const fadeLen = Math.min(512, Math.floor(rangeLen / 8), padSamples);
+    for (let c = 0; c < numCh; c++) {
+      const src = correctedSub.getChannelData(c);
+      const dst = this.buffer.getChannelData(c);
+      for (let i = 0; i < rangeLen; i++) {
+        const targetIdx = startSample + i;
+        const srcIdx = padSamples + i;
+        let mix = 1;
+        if (fadeLen > 0) {
+          if (i < fadeLen) mix = i / fadeLen;
+          else if (i >= rangeLen - fadeLen) mix = (rangeLen - i) / fadeLen;
+        }
+        dst[targetIdx] = src[srcIdx] * mix + dst[targetIdx] * (1 - mix);
+      }
+    }
+    ctx.close();
+    this.peaks = null;
+    this.pitchCorrected = true;
+  }
 }
