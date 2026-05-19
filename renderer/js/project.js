@@ -23,7 +23,7 @@ export async function loadProjectFromFile(file) {
   const text = await file.text();
   const data = JSON.parse(text);
   if (!data.tracks || !Array.isArray(data.tracks)) {
-    throw new Error('Invalid project file');
+    throw new Error('プロジェクトファイルが不正です');
   }
   return data;
 }

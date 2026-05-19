@@ -1,9 +1,9 @@
 export const Widener = {
   id: 'widener',
-  name: 'Stereo Widener',
+  name: 'ステレオワイドナー',
   tag: 'WIDE',
   paramDefs: [
-    { name: 'width', label: 'Width', min: 0, max: 2, default: 1.0, step: 0.01, format: v => (v * 100).toFixed(0) + '%' },
+    { name: 'width', label: '広がり', min: 0, max: 2, default: 1.0, step: 0.01, format: v => (v * 100).toFixed(0) + '%' },
   ],
   defaults() {
     return Object.fromEntries(this.paramDefs.map(p => [p.name, p.default]));

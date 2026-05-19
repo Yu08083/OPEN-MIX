@@ -1,12 +1,12 @@
 export const Delay = {
   id: 'delay',
-  name: 'Delay',
+  name: 'ディレイ',
   tag: 'DLY',
   paramDefs: [
-    { name: 'time',     label: 'Time',     min: 0.01, max: 2.0, default: 0.25, step: 0.001, format: v => (v * 1000).toFixed(0) + 'ms' },
-    { name: 'feedback', label: 'Feedback', min: 0,    max: 0.95, default: 0.4, step: 0.01,  format: v => Math.round(v * 100) + '%' },
-    { name: 'mix',      label: 'Mix',      min: 0,    max: 1,    default: 0.3, step: 0.01,  format: v => Math.round(v * 100) + '%' },
-    { name: 'tone',     label: 'Tone',     min: 200,  max: 8000, default: 4000, step: 50,   format: v => Math.round(v) + 'Hz' },
+    { name: 'time',     label: 'タイム',     min: 0.01, max: 2.0, default: 0.25, step: 0.001, format: v => (v * 1000).toFixed(0) + 'ms' },
+    { name: 'feedback', label: 'フィードバック', min: 0,    max: 0.95, default: 0.4, step: 0.01,  format: v => Math.round(v * 100) + '%' },
+    { name: 'mix',      label: 'ミックス',      min: 0,    max: 1,    default: 0.3, step: 0.01,  format: v => Math.round(v * 100) + '%' },
+    { name: 'tone',     label: 'トーン',     min: 200,  max: 8000, default: 4000, step: 50,   format: v => Math.round(v) + 'Hz' },
   ],
   defaults() {
     return Object.fromEntries(this.paramDefs.map(p => [p.name, p.default]));

@@ -11,12 +11,12 @@ function buildCurve(drive) {
 
 export const Saturator = {
   id: 'saturator',
-  name: 'Saturator',
+  name: 'サチュレーター',
   tag: 'SAT',
   paramDefs: [
-    { name: 'drive', label: 'Drive', min: 0, max: 1, default: 0.4, step: 0.01, format: v => Math.round(v * 100) + '%' },
-    { name: 'mix',   label: 'Mix',   min: 0, max: 1, default: 1.0, step: 0.01, format: v => Math.round(v * 100) + '%' },
-    { name: 'out',   label: 'Out',   min: 0, max: 2, default: 1.0, step: 0.01, format: v => v.toFixed(2) + 'x' },
+    { name: 'drive', label: 'ドライブ', min: 0, max: 1, default: 0.4, step: 0.01, format: v => Math.round(v * 100) + '%' },
+    { name: 'mix',   label: 'ミックス',   min: 0, max: 1, default: 1.0, step: 0.01, format: v => Math.round(v * 100) + '%' },
+    { name: 'out',   label: '出力',   min: 0, max: 2, default: 1.0, step: 0.01, format: v => v.toFixed(2) + 'x' },
   ],
   defaults() {
     return Object.fromEntries(this.paramDefs.map(p => [p.name, p.default]));

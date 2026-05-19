@@ -1,11 +1,11 @@
 export const Limiter = {
   id: 'limiter',
-  name: 'Limiter',
+  name: 'リミッター',
   tag: 'LIM',
   paramDefs: [
-    { name: 'ceiling', label: 'Ceiling', min: -12, max: 0, default: -1, step: 0.1, format: v => v.toFixed(1) + ' dB' },
-    { name: 'release', label: 'Release', min: 0.01, max: 1, default: 0.05, step: 0.01, format: v => (v * 1000).toFixed(0) + 'ms' },
-    { name: 'gain',    label: 'In Gain', min: 0, max: 4, default: 1.0, step: 0.01, format: v => v.toFixed(2) + 'x' },
+    { name: 'ceiling', label: '上限', min: -12, max: 0, default: -1, step: 0.1, format: v => v.toFixed(1) + ' dB' },
+    { name: 'release', label: 'リリース', min: 0.01, max: 1, default: 0.05, step: 0.01, format: v => (v * 1000).toFixed(0) + 'ms' },
+    { name: 'gain',    label: '入力ゲイン', min: 0, max: 4, default: 1.0, step: 0.01, format: v => v.toFixed(2) + 'x' },
   ],
   defaults() {
     return Object.fromEntries(this.paramDefs.map(p => [p.name, p.default]));

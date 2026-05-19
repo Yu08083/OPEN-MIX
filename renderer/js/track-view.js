@@ -32,45 +32,45 @@ function trackTemplate(track, index) {
       </div>
       <div class="track-mix-row">
         <div class="ms-buttons">
-          <button class="knob-mini mute">M</button>
-          <button class="knob-mini solo">S</button>
+          <button class="knob-mini mute" title="ミュート">M</button>
+          <button class="knob-mini solo" title="ソロ">S</button>
         </div>
-        <button class="knob-mini pitch ${track.pitchCorrected ? 'active' : ''}" title="Pitch Correction">PITCH</button>
+        <button class="knob-mini pitch ${track.pitchCorrected ? 'active' : ''}" title="ピッチ補正">ピッチ</button>
       </div>
-      ${faderRow('Gain', 'gain', 0, 2, 0.01, track.gain, gainToDb(track.gain))}
-      ${faderRow('Pan', 'pan', -1, 1, 0.01, track.pan, panLabel(track.pan))}
+      ${faderRow('音量', 'gain', 0, 2, 0.01, track.gain, gainToDb(track.gain))}
+      ${faderRow('パン', 'pan', -1, 1, 0.01, track.pan, panLabel(track.pan))}
       <div class="track-meter"><div class="track-meter-fill"></div></div>
-      <div class="section-toggle edit-toggle"><span>Edit</span><span class="chevron">›</span></div>
+      <div class="section-toggle edit-toggle"><span>編集</span><span class="chevron">›</span></div>
       <div class="edit-rack">
-        ${faderRow('Offset', 'offset', 0, 60, 0.01, track.offset, track.offset.toFixed(2) + 's')}
-        ${faderRow('Trim ⊢', 'trimStart', 0, Math.max(0, dur - 0.1), 0.01, track.trimStart, track.trimStart.toFixed(2) + 's')}
-        ${faderRow('Trim ⊣', 'trimEnd', 0, Math.max(0, dur - 0.1), 0.01, track.trimEnd, track.trimEnd.toFixed(2) + 's')}
-        ${faderRow('Fade In', 'fadeIn', 0, 10, 0.01, track.fadeIn, track.fadeIn.toFixed(2) + 's')}
-        ${faderRow('Fade Out', 'fadeOut', 0, 10, 0.01, track.fadeOut, track.fadeOut.toFixed(2) + 's')}
+        ${faderRow('オフセット', 'offset', 0, 60, 0.01, track.offset, track.offset.toFixed(2) + 's')}
+        ${faderRow('始端カット', 'trimStart', 0, Math.max(0, dur - 0.1), 0.01, track.trimStart, track.trimStart.toFixed(2) + 's')}
+        ${faderRow('終端カット', 'trimEnd', 0, Math.max(0, dur - 0.1), 0.01, track.trimEnd, track.trimEnd.toFixed(2) + 's')}
+        ${faderRow('フェードイン', 'fadeIn', 0, 10, 0.01, track.fadeIn, track.fadeIn.toFixed(2) + 's')}
+        ${faderRow('フェードアウト', 'fadeOut', 0, 10, 0.01, track.fadeOut, track.fadeOut.toFixed(2) + 's')}
       </div>
-      <div class="section-toggle fx-toggle"><span>FX Rack</span><span class="chevron">›</span></div>
+      <div class="section-toggle fx-toggle"><span>エフェクト</span><span class="chevron">›</span></div>
     </div>
     <div class="track-wave-wrap">
       <span class="track-offset-display">${offsetLabel(track)}</span>
       <canvas class="track-wave-canvas"></canvas>
     </div>
     <div class="fx-rack">
-      ${fxModule('High-pass', 'HPF', [
-        fxParam('Freq', 'hpfFreq', 20, 500, 1, track.hpfFreq, `${track.hpfFreq} Hz`),
+      ${fxModule('ハイパスフィルタ', 'HPF', [
+        fxParam('周波数', 'hpfFreq', 20, 500, 1, track.hpfFreq, `${track.hpfFreq} Hz`),
       ])}
-      ${fxModule('EQ', '3-Band', [
-        fxParam('Low',  'eqLow',  -12, 12, 0.1, track.eqLow,  `${track.eqLow.toFixed(1)} dB`),
-        fxParam('Mid',  'eqMid',  -12, 12, 0.1, track.eqMid,  `${track.eqMid.toFixed(1)} dB`),
-        fxParam('High', 'eqHigh', -12, 12, 0.1, track.eqHigh, `${track.eqHigh.toFixed(1)} dB`),
+      ${fxModule('イコライザ', '3-Band EQ', [
+        fxParam('低域',  'eqLow',  -12, 12, 0.1, track.eqLow,  `${track.eqLow.toFixed(1)} dB`),
+        fxParam('中域',  'eqMid',  -12, 12, 0.1, track.eqMid,  `${track.eqMid.toFixed(1)} dB`),
+        fxParam('高域', 'eqHigh', -12, 12, 0.1, track.eqHigh, `${track.eqHigh.toFixed(1)} dB`),
       ])}
-      ${fxModule('Compressor', 'COMP', [
-        fxParam('Thresh',  'compThreshold', -60, 0,    0.5,   track.compThreshold, `${track.compThreshold} dB`),
-        fxParam('Ratio',   'compRatio',      1,  20,   0.1,   track.compRatio,     `${track.compRatio.toFixed(1)}:1`),
-        fxParam('Attack',  'compAttack',     0,  0.2,  0.001, track.compAttack,    `${(track.compAttack*1000).toFixed(1)}ms`),
-        fxParam('Release', 'compRelease',    0.01, 1,  0.01,  track.compRelease,   `${(track.compRelease*1000).toFixed(0)}ms`),
+      ${fxModule('コンプレッサー', 'COMP', [
+        fxParam('閾値',  'compThreshold', -60, 0,    0.5,   track.compThreshold, `${track.compThreshold} dB`),
+        fxParam('レシオ',   'compRatio',      1,  20,   0.1,   track.compRatio,     `${track.compRatio.toFixed(1)}:1`),
+        fxParam('アタック',  'compAttack',     0,  0.2,  0.001, track.compAttack,    `${(track.compAttack*1000).toFixed(1)}ms`),
+        fxParam('リリース', 'compRelease',    0.01, 1,  0.01,  track.compRelease,   `${(track.compRelease*1000).toFixed(0)}ms`),
       ])}
-      ${fxModule('Reverb', 'FX', [
-        fxParam('Mix', 'reverbMix', 0, 1, 0.01, track.reverbMix, `${Math.round(track.reverbMix*100)}%`),
+      ${fxModule('リバーブ', 'REV', [
+        fxParam('ミックス', 'reverbMix', 0, 1, 0.01, track.reverbMix, `${Math.round(track.reverbMix*100)}%`),
       ])}
       <div class="plugin-chain"></div>
     </div>

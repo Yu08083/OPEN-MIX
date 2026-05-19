@@ -10,11 +10,11 @@ const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 
 export function getScaleOptions() {
   return [
-    { id: 'chromatic', name: 'Chromatic' },
-    { id: 'major', name: 'Major' },
-    { id: 'minor', name: 'Minor' },
-    { id: 'pentatonic_major', name: 'Major Pentatonic' },
-    { id: 'pentatonic_minor', name: 'Minor Pentatonic' },
+    { id: 'chromatic', name: 'クロマチック（全音）' },
+    { id: 'major', name: 'メジャー' },
+    { id: 'minor', name: 'マイナー' },
+    { id: 'pentatonic_major', name: 'メジャーペンタトニック' },
+    { id: 'pentatonic_minor', name: 'マイナーペンタトニック' },
   ];
 }
 

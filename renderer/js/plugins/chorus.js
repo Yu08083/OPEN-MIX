@@ -1,11 +1,11 @@
 export const Chorus = {
   id: 'chorus',
-  name: 'Chorus',
+  name: 'コーラス',
   tag: 'CHO',
   paramDefs: [
-    { name: 'rate',  label: 'Rate',  min: 0.1, max: 8,    default: 1.5, step: 0.01, format: v => v.toFixed(2) + 'Hz' },
-    { name: 'depth', label: 'Depth', min: 0,   max: 0.01, default: 0.003, step: 0.0001, format: v => (v * 1000).toFixed(1) + 'ms' },
-    { name: 'mix',   label: 'Mix',   min: 0,   max: 1,    default: 0.4, step: 0.01, format: v => Math.round(v * 100) + '%' },
+    { name: 'rate',  label: 'レート',  min: 0.1, max: 8,    default: 1.5, step: 0.01, format: v => v.toFixed(2) + 'Hz' },
+    { name: 'depth', label: '深さ', min: 0,   max: 0.01, default: 0.003, step: 0.0001, format: v => (v * 1000).toFixed(1) + 'ms' },
+    { name: 'mix',   label: 'ミックス',   min: 0,   max: 1,    default: 0.4, step: 0.01, format: v => Math.round(v * 100) + '%' },
   ],
   defaults() {
     return Object.fromEntries(this.paramDefs.map(p => [p.name, p.default]));

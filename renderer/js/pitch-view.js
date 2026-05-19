@@ -37,14 +37,14 @@ export class PitchModal {
     this.modal.innerHTML = `
       <div class="modal-header">
         <div>
-          <div class="modal-title">Pitch Correction</div>
+          <div class="modal-title">ピッチ補正</div>
           <div class="modal-subtitle">${escapeHtml(this.track.name)}</div>
         </div>
         <button class="modal-close" id="pitch-close">×</button>
       </div>
 
       <div class="modal-section">
-        <div class="modal-section-label">Detected Pitch</div>
+        <div class="modal-section-label">検出ピッチ</div>
         <div class="pitch-canvas-wrap">
           <canvas class="pitch-canvas" id="pitch-canvas"></canvas>
         </div>
@@ -53,13 +53,13 @@ export class PitchModal {
       <div class="modal-section">
         <div class="modal-grid">
           <div>
-            <div class="modal-section-label">Scale</div>
+            <div class="modal-section-label">スケール</div>
             <select class="select" id="pitch-scale">
               ${scales.map(s => `<option value="${s.id}" ${this.scale===s.id?'selected':''}>${s.name}</option>`).join('')}
             </select>
           </div>
           <div>
-            <div class="modal-section-label">Key</div>
+            <div class="modal-section-label">キー</div>
             <select class="select" id="pitch-key">
               ${keys.map(k => `<option value="${k.id}" ${this.key===k.id?'selected':''}>${k.name}</option>`).join('')}
             </select>
@@ -68,22 +68,22 @@ export class PitchModal {
       </div>
 
       <div class="modal-section">
-        <div class="modal-section-label">Correction Strength</div>
+        <div class="modal-section-label">補正量</div>
         <div class="modal-control">
-          <span>Amount</span>
+          <span>強さ</span>
           <input type="range" class="slider" id="pitch-strength" min="0" max="1" step="0.01" value="${this.strength}">
           <span id="pitch-strength-val">${Math.round(this.strength*100)}%</span>
         </div>
       </div>
 
       <div class="pitch-warn">
-        位相ボコーダ実装。子音やビブラートに弱く、強くかけるとロボット感が出ます。微調整向き。
+        位相ボコーダ方式。子音やビブラートに弱く、強くかけるとロボット感が出ます。微調整向き。
       </div>
 
       <div class="modal-footer">
-        <button class="t-btn" id="pitch-reanalyze">Re-analyze</button>
-        <button class="t-btn" id="pitch-cancel">Cancel</button>
-        <button class="t-btn primary" id="pitch-apply">Apply</button>
+        <button class="t-btn" id="pitch-reanalyze">再解析</button>
+        <button class="t-btn" id="pitch-cancel">キャンセル</button>
+        <button class="t-btn primary" id="pitch-apply">適用</button>
       </div>
     `;
 
@@ -144,7 +144,7 @@ export class PitchModal {
       ctx.fillStyle = '#9D9A92';
       ctx.font = '11px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
-      ctx.fillText('NO PITCH DETECTED', w / 2, h / 2);
+      ctx.fillText('ピッチが検出されませんでした', w / 2, h / 2);
       return;
     }
 

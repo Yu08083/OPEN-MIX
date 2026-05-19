@@ -12,10 +12,10 @@ function pluginChainTemplate(track) {
   const addOptions = list.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
   return `
     <div class="plugin-chain-header">
-      <span class="plugin-chain-label">Plugin Chain</span>
+      <span class="plugin-chain-label">プラグイン</span>
       <div class="plugin-chain-add">
         <select class="select plugin-add-select">
-          <option value="">+ Add Plugin</option>
+          <option value="">+ プラグイン追加</option>
           ${addOptions}
         </select>
       </div>
@@ -37,10 +37,10 @@ function pluginTile(plugin, idx, total) {
           <span class="plugin-tile-tag">${def.tag}</span>
         </div>
         <div class="plugin-tile-actions">
-          <button class="plugin-tile-btn p-bypass" title="${plugin.bypassed ? 'Enable' : 'Bypass'}">${plugin.bypassed ? '○' : '●'}</button>
-          <button class="plugin-tile-btn p-up" title="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
-          <button class="plugin-tile-btn p-down" title="Move down" ${idx === total - 1 ? 'disabled' : ''}>↓</button>
-          <button class="plugin-tile-btn p-remove" title="Remove">×</button>
+          <button class="plugin-tile-btn p-bypass" title="${plugin.bypassed ? '有効化' : 'バイパス'}">${plugin.bypassed ? '○' : '●'}</button>
+          <button class="plugin-tile-btn p-up" title="上へ" ${idx === 0 ? 'disabled' : ''}>↑</button>
+          <button class="plugin-tile-btn p-down" title="下へ" ${idx === total - 1 ? 'disabled' : ''}>↓</button>
+          <button class="plugin-tile-btn p-remove" title="削除">×</button>
         </div>
       </div>
       <div class="plugin-tile-body">
