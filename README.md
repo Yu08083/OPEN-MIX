@@ -183,4 +183,9 @@ export const MyPlugin = {
 
 ## ライセンス
 
-MIT
+MIT License（詳細は `LICENSE` ファイル参照）
+
+- 個人・商用利用、自由
+- 改変・再配布、自由
+- OPEN MIX を使って制作した楽曲・MIX 作品の権利はすべて制作者に帰属
+- クレジット表記不要
