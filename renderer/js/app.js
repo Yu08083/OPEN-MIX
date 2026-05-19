@@ -49,6 +49,21 @@ export class App {
       if (e.code === 'Escape') this.pitchModal.close();
       return;
     }
+    if (e.code === 'Escape') {
+      e.preventDefault();
+      this.engine.tracks.forEach(t => {
+        if (t.hasSelection()) {
+          t.clearSelection();
+          if (t.el) {
+            const ov = t.el.querySelector('.selection-overlay');
+            const tb = t.el.querySelector('.selection-toolbar');
+            if (ov) ov.style.display = 'none';
+            if (tb) tb.classList.remove('active');
+          }
+        }
+      });
+      return;
+    }
     const mod = e.ctrlKey || e.metaKey;
 
     if (mod && e.code === 'KeyS') { e.preventDefault(); if (!document.getElementById('btn-save-project').disabled) this._saveProject(); return; }
@@ -189,6 +204,10 @@ export class App {
 
   openPitchModal(track) {
     this.pitchModal.open(track);
+  }
+
+  openPitchModalForRange(track, start, end) {
+    return this.pitchModal.openForRange(track, start, end);
   }
 
   _bindGlobalEvents() {

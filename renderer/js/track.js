@@ -36,6 +36,9 @@ export class Track {
     this.pitchCorrected = false;
     this.pluginChain = [];
 
+    this.selectionStart = null;
+    this.selectionEnd = null;
+
     this.fxOpen = false;
     this.editOpen = false;
 
@@ -454,5 +457,147 @@ export class Track {
       this.trimStart = 0;
       this.trimEnd = 0;
     }
+    this.selectionStart = null;
+    this.selectionEnd = null;
+  }
+
+  hasSelection() {
+    return this.selectionStart !== null
+        && this.selectionEnd !== null
+        && this.selectionEnd > this.selectionStart;
+  }
+
+  clearSelection() {
+    this.selectionStart = null;
+    this.selectionEnd = null;
+  }
+
+  silenceRange(start, end) {
+    if (!this.buffer) return;
+    const sr = this.buffer.sampleRate;
+    const startSample = Math.max(0, Math.floor(start * sr));
+    const endSample = Math.min(this.buffer.length, Math.floor(end * sr));
+    const fade = Math.min(64, Math.floor((endSample - startSample) / 2));
+    for (let c = 0; c < this.buffer.numberOfChannels; c++) {
+      const data = this.buffer.getChannelData(c);
+      for (let i = startSample; i < endSample; i++) data[i] = 0;
+      for (let i = 0; i < fade; i++) {
+        const k = i / fade;
+        if (startSample - 1 - i >= 0) data[startSample - 1 - i] *= (1 - k);
+        if (endSample + i < this.buffer.length) data[endSample + i] *= k;
+      }
+    }
+    this.peaks = null;
+  }
+
+  applyGainToRange(start, end, factor) {
+    if (!this.buffer) return;
+    const sr = this.buffer.sampleRate;
+    const startSample = Math.max(0, Math.floor(start * sr));
+    const endSample = Math.min(this.buffer.length, Math.floor(end * sr));
+    const fade = Math.min(128, Math.floor((endSample - startSample) / 4));
+    for (let c = 0; c < this.buffer.numberOfChannels; c++) {
+      const data = this.buffer.getChannelData(c);
+      for (let i = startSample + fade; i < endSample - fade; i++) data[i] *= factor;
+      for (let i = 0; i < fade; i++) {
+        const k = i / fade;
+        const mix = 1 + (factor - 1) * k;
+        if (startSample + i < data.length) data[startSample + i] *= mix;
+        if (endSample - 1 - i >= 0) data[endSample - 1 - i] *= mix;
+      }
+    }
+    this.peaks = null;
+  }
+
+  applyFadeToRange(start, end, type) {
+    if (!this.buffer) return;
+    const sr = this.buffer.sampleRate;
+    const startSample = Math.max(0, Math.floor(start * sr));
+    const endSample = Math.min(this.buffer.length, Math.floor(end * sr));
+    const length = endSample - startSample;
+    if (length <= 0) return;
+    for (let c = 0; c < this.buffer.numberOfChannels; c++) {
+      const data = this.buffer.getChannelData(c);
+      for (let i = 0; i < length; i++) {
+        const ratio = i / length;
+        const factor = type === 'in' ? ratio : (1 - ratio);
+        data[startSample + i] *= factor;
+      }
+    }
+    this.peaks = null;
+  }
+
+  deleteRange(start, end) {
+    if (!this.buffer) return;
+    const sr = this.buffer.sampleRate;
+    const startSample = Math.max(0, Math.floor(start * sr));
+    const endSample = Math.min(this.buffer.length, Math.floor(end * sr));
+    const removeLen = endSample - startSample;
+    if (removeLen <= 0) return;
+    const newLen = this.buffer.length - removeLen;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const newBuf = ctx.createBuffer(this.buffer.numberOfChannels, newLen, sr);
+    for (let c = 0; c < this.buffer.numberOfChannels; c++) {
+      const src = this.buffer.getChannelData(c);
+      const dst = newBuf.getChannelData(c);
+      for (let i = 0; i < startSample; i++) dst[i] = src[i];
+      for (let i = endSample; i < this.buffer.length; i++) {
+        dst[startSample + (i - endSample)] = src[i];
+      }
+      const xfade = Math.min(64, Math.floor(removeLen / 2));
+      for (let i = 0; i < xfade && startSample - xfade + i >= 0 && startSample + i < newLen; i++) {
+        const k = i / xfade;
+        dst[startSample - xfade + i] *= (1 - k);
+      }
+    }
+    ctx.close();
+    this.replaceBuffer(newBuf);
+  }
+
+  insertSilence(at, durationSec) {
+    if (!this.buffer) return;
+    const sr = this.buffer.sampleRate;
+    const atSample = Math.max(0, Math.min(this.buffer.length, Math.floor(at * sr)));
+    const insertLen = Math.floor(durationSec * sr);
+    if (insertLen <= 0) return;
+    const newLen = this.buffer.length + insertLen;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const newBuf = ctx.createBuffer(this.buffer.numberOfChannels, newLen, sr);
+    for (let c = 0; c < this.buffer.numberOfChannels; c++) {
+      const src = this.buffer.getChannelData(c);
+      const dst = newBuf.getChannelData(c);
+      for (let i = 0; i < atSample; i++) dst[i] = src[i];
+      for (let i = atSample; i < this.buffer.length; i++) {
+        dst[i + insertLen] = src[i];
+      }
+    }
+    ctx.close();
+    this.replaceBuffer(newBuf);
+  }
+
+  normalizeRange(start, end) {
+    if (!this.buffer) return;
+    const sr = this.buffer.sampleRate;
+    const startSample = Math.max(0, Math.floor(start * sr));
+    const endSample = Math.min(this.buffer.length, Math.floor(end * sr));
+    let peak = 0;
+    for (let c = 0; c < this.buffer.numberOfChannels; c++) {
+      const data = this.buffer.getChannelData(c);
+      for (let i = startSample; i < endSample; i++) {
+        const v = Math.abs(data[i]);
+        if (v > peak) peak = v;
+      }
+    }
+    if (peak < 1e-6) return;
+    const factor = 0.95 / peak;
+    this.applyGainToRange(start, end, factor);
+  }
+
+  async applyPitchToRange(start, end, options, progressCb) {
+    if (!this.buffer) return;
+    const { correctPitchRange } = await import('./pitch.js');
+    await correctPitchRange(this.buffer, start, end, options, progressCb);
+    this.peaks = null;
+    this.pitchCorrected = true;
   }
 }

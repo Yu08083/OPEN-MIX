@@ -11,6 +11,9 @@ export class PitchModal {
     this.scale = 'chromatic';
     this.key = 0;
     this.strength = 1.0;
+    this.rangeMode = false;
+    this.rangeStart = 0;
+    this.rangeEnd = 0;
     this.backdrop.addEventListener('click', e => {
       if (e.target === this.backdrop) this.close();
     });
@@ -19,6 +22,18 @@ export class PitchModal {
   async open(track) {
     this.track = track;
     this.curve = null;
+    this.rangeMode = false;
+    this.render();
+    this.backdrop.classList.add('active');
+    await this.analyze();
+  }
+
+  async openForRange(track, start, end) {
+    this.track = track;
+    this.curve = null;
+    this.rangeMode = true;
+    this.rangeStart = start;
+    this.rangeEnd = end;
     this.render();
     this.backdrop.classList.add('active');
     await this.analyze();
@@ -37,8 +52,8 @@ export class PitchModal {
     this.modal.innerHTML = `
       <div class="modal-header">
         <div>
-          <div class="modal-title">ピッチ補正</div>
-          <div class="modal-subtitle">${escapeHtml(this.track.name)}</div>
+          <div class="modal-title">ピッチ補正${this.rangeMode ? '（選択範囲のみ）' : ''}</div>
+          <div class="modal-subtitle">${escapeHtml(this.track.name)}${this.rangeMode ? ` · ${this.rangeStart.toFixed(2)}s 〜 ${this.rangeEnd.toFixed(2)}s` : ''}</div>
         </div>
         <button class="modal-close" id="pitch-close">×</button>
       </div>
@@ -181,19 +196,32 @@ export class PitchModal {
 
   async apply() {
     if (!this.track || !this.track.buffer) return;
-    if (!confirm(`「${this.track.name}」にピッチ補正を適用します。元のバッファは置き換えられます。続けますか？`)) return;
+    const target = this.rangeMode
+      ? `「${this.track.name}」の選択範囲（${this.rangeStart.toFixed(2)}〜${this.rangeEnd.toFixed(2)}s）`
+      : `「${this.track.name}」全体`;
+    if (!confirm(`${target}にピッチ補正を適用します。元の音声データは書き換えられます。続けますか？`)) return;
 
-    this.app._showOverlay('ピッチ補正適用中…');
+    this.app._showOverlay(this.rangeMode ? '範囲ピッチ補正中…' : 'ピッチ補正適用中…');
     try {
-      const newBuf = await correctPitch(this.track.buffer, {
-        strength: this.strength,
-        scale: this.scale,
-        key: this.key,
-      }, p => {
-        document.getElementById('overlay-fill').style.width = (p * 100) + '%';
-      });
-      this.track.replaceBuffer(newBuf);
-      this.track.pitchCorrected = true;
+      if (this.rangeMode) {
+        await this.track.applyPitchToRange(this.rangeStart, this.rangeEnd, {
+          strength: this.strength,
+          scale: this.scale,
+          key: this.key,
+        }, p => {
+          document.getElementById('overlay-fill').style.width = (p * 100) + '%';
+        });
+      } else {
+        const newBuf = await correctPitch(this.track.buffer, {
+          strength: this.strength,
+          scale: this.scale,
+          key: this.key,
+        }, p => {
+          document.getElementById('overlay-fill').style.width = (p * 100) + '%';
+        });
+        this.track.replaceBuffer(newBuf);
+        this.track.pitchCorrected = true;
+      }
       this.app.drawWave(this.track);
       this.app.refreshTrackPitchBadge(this.track);
       this.close();

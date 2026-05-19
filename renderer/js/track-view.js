@@ -52,7 +52,9 @@ function trackTemplate(track, index) {
     </div>
     <div class="track-wave-wrap">
       <span class="track-offset-display">${offsetLabel(track)}</span>
+      <div class="selection-toolbar"></div>
       <canvas class="track-wave-canvas"></canvas>
+      <div class="selection-overlay"></div>
     </div>
     <div class="fx-rack">
       ${fxModule('ハイパスフィルタ', 'HPF', [
@@ -190,14 +192,144 @@ function bindTrackEvents(app, track, el) {
     el.classList.toggle('edit-open', track.editOpen);
   });
 
-  el.querySelector('.track-wave-wrap').addEventListener('click', e => {
-    const total = app.engine.totalDuration();
-    if (total === 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const trackLocal = (x / rect.width) * track.buffer.duration;
-    app.engine.seek(track.offset + trackLocal);
+  bindWaveformInteraction(app, track, el);
+}
+
+function bindWaveformInteraction(app, track, el) {
+  const waveWrap = el.querySelector('.track-wave-wrap');
+  const overlay = el.querySelector('.selection-overlay');
+  const toolbar = el.querySelector('.selection-toolbar');
+
+  let downX = null;
+  let downTime = null;
+  let dragging = false;
+  const DRAG_THRESHOLD = 5;
+
+  const xToTime = clientX => {
+    const rect = waveWrap.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    return (x / rect.width) * track.buffer.duration;
+  };
+
+  waveWrap.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.selection-toolbar')) return;
+    downX = e.clientX;
+    downTime = xToTime(e.clientX);
+    dragging = false;
+    app.selectTrack(track);
   });
+
+  window.addEventListener('mousemove', e => {
+    if (downX === null) return;
+    if (!dragging && Math.abs(e.clientX - downX) < DRAG_THRESHOLD) return;
+    dragging = true;
+    const currentTime = xToTime(e.clientX);
+    track.selectionStart = Math.min(downTime, currentTime);
+    track.selectionEnd = Math.max(downTime, currentTime);
+    updateSelectionUI(track, overlay, toolbar);
+  });
+
+  window.addEventListener('mouseup', e => {
+    if (downX === null) return;
+    if (!dragging) {
+      app.engine.seek(track.offset + downTime);
+    } else {
+      if (track.selectionEnd - track.selectionStart < 0.02) {
+        track.clearSelection();
+      }
+      updateSelectionUI(track, overlay, toolbar);
+    }
+    downX = null;
+    downTime = null;
+    dragging = false;
+  });
+
+  toolbar.addEventListener('click', async e => {
+    const btn = e.target.closest('button[data-op]');
+    if (!btn) return;
+    const op = btn.dataset.op;
+    await runSelectionOp(app, track, op);
+    updateSelectionUI(track, overlay, toolbar);
+  });
+}
+
+function updateSelectionUI(track, overlay, toolbar) {
+  if (!track.hasSelection()) {
+    overlay.style.display = 'none';
+    toolbar.classList.remove('active');
+    return;
+  }
+  const dur = track.buffer.duration;
+  const leftPct  = (track.selectionStart / dur) * 100;
+  const widthPct = ((track.selectionEnd - track.selectionStart) / dur) * 100;
+  overlay.style.display = 'block';
+  overlay.style.left = leftPct + '%';
+  overlay.style.width = widthPct + '%';
+
+  const selDur = track.selectionEnd - track.selectionStart;
+  toolbar.innerHTML = `
+    <span class="sel-info">
+      <span class="sel-info-label">範囲選択</span>
+      <span class="sel-info-time">${track.selectionStart.toFixed(2)}s → ${track.selectionEnd.toFixed(2)}s (${selDur.toFixed(2)}s)</span>
+    </span>
+    <div class="sel-actions">
+      <button class="sel-btn" data-op="silence" title="範囲を無音にする">無音化</button>
+      <button class="sel-btn" data-op="normalize" title="範囲のピーク音量を最大化">正規化</button>
+      <button class="sel-btn" data-op="gain-up" title="範囲の音量を上げる">音量+</button>
+      <button class="sel-btn" data-op="gain-down" title="範囲の音量を下げる">音量−</button>
+      <button class="sel-btn" data-op="fade-in" title="範囲全体にフェードインを適用">フェードイン</button>
+      <button class="sel-btn" data-op="fade-out" title="範囲全体にフェードアウトを適用">フェードアウト</button>
+      <button class="sel-btn" data-op="pitch" title="範囲だけにピッチ補正を適用">ピッチ補正</button>
+      <button class="sel-btn danger" data-op="delete" title="範囲を切り取って詰める">削除</button>
+      <button class="sel-btn ghost" data-op="clear" title="選択を解除">×</button>
+    </div>
+  `;
+  toolbar.classList.add('active');
+}
+
+async function runSelectionOp(app, track, op) {
+  if (!track.hasSelection() && op !== 'clear') return;
+  const s = track.selectionStart, e = track.selectionEnd;
+  switch (op) {
+    case 'silence':
+      track.silenceRange(s, e);
+      app.drawWave(track);
+      break;
+    case 'normalize':
+      track.normalizeRange(s, e);
+      app.drawWave(track);
+      break;
+    case 'gain-up':
+      track.applyGainToRange(s, e, Math.pow(10, 3/20));
+      app.drawWave(track);
+      break;
+    case 'gain-down':
+      track.applyGainToRange(s, e, Math.pow(10, -3/20));
+      app.drawWave(track);
+      break;
+    case 'fade-in':
+      track.applyFadeToRange(s, e, 'in');
+      app.drawWave(track);
+      break;
+    case 'fade-out':
+      track.applyFadeToRange(s, e, 'out');
+      app.drawWave(track);
+      break;
+    case 'delete':
+      if (!confirm(`選択範囲（${(e - s).toFixed(2)}秒）を削除しますか？\n削除後はその分だけ全体が短くなります。`)) return;
+      track.deleteRange(s, e);
+      app.drawWave(track);
+      app.refreshAll();
+      break;
+    case 'pitch':
+      await app.openPitchModalForRange(track, s, e);
+      app.drawWave(track);
+      break;
+    case 'clear':
+      track.clearSelection();
+      break;
+  }
 }
 
 function applyFxParam(track, fx, v) {

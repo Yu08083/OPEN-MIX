@@ -292,3 +292,43 @@ export async function correctPitch(buffer, options, progressCb) {
   ctx.close();
   return newBuf;
 }
+
+export async function correctPitchRange(buffer, startSec, endSec, options, progressCb) {
+  const sr = buffer.sampleRate;
+  const numCh = buffer.numberOfChannels;
+  const startSample = Math.max(0, Math.floor(startSec * sr));
+  const endSample = Math.min(buffer.length, Math.floor(endSec * sr));
+  const rangeLen = endSample - startSample;
+  if (rangeLen < 2048) return;
+
+  const padSamples = Math.min(4096, startSample, buffer.length - endSample);
+  const subLen = rangeLen + padSamples * 2;
+  const subStart = startSample - padSamples;
+
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const subBuf = ctx.createBuffer(numCh, subLen, sr);
+  for (let c = 0; c < numCh; c++) {
+    const src = buffer.getChannelData(c);
+    const dst = subBuf.getChannelData(c);
+    for (let i = 0; i < subLen; i++) dst[i] = src[subStart + i];
+  }
+
+  const correctedSub = await correctPitch(subBuf, options, progressCb);
+
+  const fadeLen = Math.min(512, Math.floor(rangeLen / 8), padSamples);
+  for (let c = 0; c < numCh; c++) {
+    const src = correctedSub.getChannelData(c);
+    const dst = buffer.getChannelData(c);
+    for (let i = 0; i < rangeLen; i++) {
+      const targetIdx = startSample + i;
+      const srcIdx = padSamples + i;
+      let mix = 1;
+      if (fadeLen > 0) {
+        if (i < fadeLen) mix = i / fadeLen;
+        else if (i >= rangeLen - fadeLen) mix = (rangeLen - i) / fadeLen;
+      }
+      dst[targetIdx] = src[srcIdx] * mix + dst[targetIdx] * (1 - mix);
+    }
+  }
+  ctx.close();
+}
