@@ -1,4 +1,4 @@
-const PROJECT_VERSION = 1;
+const PROJECT_VERSION = 2;
 
 export function serializeProject(engine) {
   return {
@@ -6,6 +6,10 @@ export function serializeProject(engine) {
     app: 'OPEN MIX',
     savedAt: new Date().toISOString(),
     masterGain: engine.masterGain ? engine.masterGain.gain.value : 1,
+    bpm: engine.bpm,
+    beatsPerBar: engine.beatsPerBar,
+    snapEnabled: engine.snapEnabled,
+    snapResolution: engine.snapResolution,
     tracks: engine.tracks.map(t => t.serialize()),
   };
 }
@@ -28,19 +32,35 @@ export async function loadProjectFromFile(file) {
   return data;
 }
 
-export function applyProject(engine, masterSlider, masterDisplay, project) {
-  const tracksByFilename = new Map();
-  engine.tracks.forEach(t => tracksByFilename.set(t.filename, t));
+export function applyProject(engine, masterSlider, masterDisplay, project, bufferByName) {
+  if (typeof project.bpm === 'number') engine.bpm = project.bpm;
+  if (typeof project.beatsPerBar === 'number') engine.beatsPerBar = project.beatsPerBar;
+  if (typeof project.snapEnabled === 'boolean') engine.snapEnabled = project.snapEnabled;
+  if (typeof project.snapResolution === 'number') engine.snapResolution = project.snapResolution;
+
+  const tracksByName = new Map();
+  engine.tracks.forEach(t => tracksByName.set(t.name, t));
 
   let matched = 0;
-  let unmatched = [];
+  let missing = [];
   project.tracks.forEach(ps => {
-    const t = tracksByFilename.get(ps.filename);
+    const t = tracksByName.get(ps.name);
     if (t) {
-      t.applySerialized(ps);
+      t.applySerialized(ps, bufferByName || {});
       matched++;
+      if (Array.isArray(ps.clips)) {
+        ps.clips.forEach(cd => {
+          if (cd.type === 'audio' && !(bufferByName && bufferByName[cd.name])) {
+            missing.push(cd.name);
+          }
+        });
+      }
     } else {
-      unmatched.push(ps.filename);
+      if (Array.isArray(ps.clips)) {
+        ps.clips.forEach(cd => {
+          if (cd.type === 'audio') missing.push(cd.name);
+        });
+      }
     }
   });
 
@@ -48,12 +68,21 @@ export function applyProject(engine, masterSlider, masterDisplay, project) {
 
   if (typeof project.masterGain === 'number' && engine.masterGain) {
     engine.masterGain.gain.value = project.masterGain;
-    masterSlider.value = project.masterGain;
-    const db = project.masterGain <= 0.001
-      ? '-∞ dB'
-      : (20 * Math.log10(project.masterGain) >= 0 ? '+' : '') + (20 * Math.log10(project.masterGain)).toFixed(1) + ' dB';
-    masterDisplay.textContent = db;
+    if (masterSlider) masterSlider.value = project.masterGain;
+    if (masterDisplay) {
+      const db = project.masterGain <= 0.001
+        ? '-∞ dB'
+        : (20 * Math.log10(project.masterGain) >= 0 ? '+' : '') + (20 * Math.log10(project.masterGain)).toFixed(1) + ' dB';
+      masterDisplay.textContent = db;
+    }
   }
 
-  return { matched, unmatched, totalInProject: project.tracks.length };
+  const bpmInput = document.getElementById('bpm-input');
+  if (bpmInput) bpmInput.value = engine.bpm;
+  const snapBtn = document.getElementById('snap-toggle');
+  if (snapBtn) snapBtn.classList.toggle('active', engine.snapEnabled);
+  const snapRes = document.getElementById('snap-resolution');
+  if (snapRes) snapRes.value = engine.snapResolution;
+
+  return { matched, missing, totalInProject: project.tracks.length };
 }

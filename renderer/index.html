@@ -25,7 +25,7 @@
   <header class="header">
     <div class="brand-block">
       <img class="brand-mark" src="./assets/logo.png" alt="OPEN MIX">
-      <span class="brand-meta">ボーカルMIX エディタ / v0.7</span>
+      <span class="brand-meta">ボーカルMIX エディタ / v0.8</span>
     </div>
     <div class="transport">
       <div class="transport-buttons">
@@ -37,11 +37,23 @@
         <span id="time-current">0:00.00</span>
         <span class="duration">/ <span id="time-duration">0:00.00</span></span>
       </div>
+      <div class="bpm-controls">
+        <label class="bpm-label">BPM</label>
+        <input type="number" class="bpm-input" id="bpm-input" min="20" max="300" step="1" value="120">
+        <button class="t-btn snap-toggle active" id="snap-toggle" title="グリッドにスナップ">スナップ</button>
+        <select class="select snap-resolution" id="snap-resolution">
+          <option value="1">1/1</option>
+          <option value="2">1/2</option>
+          <option value="4" selected>1/4</option>
+          <option value="8">1/8</option>
+          <option value="16">1/16</option>
+        </select>
+      </div>
     </div>
     <div class="header-right">
       <div class="project-actions">
-        <button class="t-btn" id="btn-save-project" disabled>プロジェクト保存</button>
-        <button class="t-btn" id="btn-load-project">プロジェクト読込</button>
+        <button class="t-btn" id="btn-save-project" disabled>保存</button>
+        <button class="t-btn" id="btn-load-project">読込</button>
         <input type="file" id="load-project-input" accept=".json,application/json" style="display:none">
       </div>
       <div class="master-strip">
@@ -50,7 +62,7 @@
         <div class="master-strip-meter"><div class="master-strip-meter-fill" id="master-meter-fill"></div></div>
         <span class="master-strip-value" id="master-gain-val">0.0 dB</span>
       </div>
-      <button class="t-btn primary" id="btn-export" disabled>WAV書き出し</button>
+      <button class="t-btn primary" id="btn-export" disabled>書き出し</button>
     </div>
   </header>
 
@@ -66,14 +78,15 @@
   </div>
 
   <div class="add-track" id="add-track">
-    <button class="add-track-btn" id="add-track-btn">+ トラック追加</button>
+    <button class="add-track-btn" id="add-track-btn">+ オーディオトラック</button>
+    <button class="add-track-btn" id="btn-add-midi-track">+ MIDIトラック</button>
     <span class="add-track-hint">または音源ファイルをドロップ</span>
     <input type="file" id="add-track-input" accept="audio/*" multiple style="display:none">
   </div>
 
   <footer class="footer">
     <div>OPEN MIX · MIT License</div>
-    <div>v0.7 · DAW風タイムライン · 手動ピッチ編集 · 範囲選択 · プラグイン</div>
+    <div>v0.8 · マルチクリップ · BPMスナップ · 分割/複製 · MIDI</div>
   </footer>
 </div>
 
@@ -86,6 +99,10 @@
 
 <div class="modal-backdrop" id="pitch-modal-backdrop">
   <div class="modal" id="pitch-modal"></div>
+</div>
+
+<div class="modal-backdrop" id="midi-modal-backdrop">
+  <div class="modal" id="midi-modal"></div>
 </div>
 
 <script type="module" src="./js/main.js"></script>

@@ -1,10 +1,12 @@
 import { Engine } from './engine.js';
 import { Track } from './track.js';
-import { appendTrackView, refreshTrackUIValues } from './track-view.js';
+import { AudioClip, MidiClip } from './clip.js';
+import { appendTrackView, refreshTrackUIValues, renderClips } from './track-view.js';
 import { renderPluginChain } from './plugin-chain-view.js';
 import { formatTime, gainToDb } from './utils.js';
 import { serializeProject, projectToBlob, defaultProjectFilename, loadProjectFromFile, applyProject } from './project.js';
 import { PitchModal } from './pitch-view.js';
+import { MidiEditor } from './midi-view.js';
 
 const isElectron = !!window.electron;
 
@@ -15,7 +17,10 @@ export class App {
     this.timelineEl = document.getElementById('timeline');
     this.playhead = document.getElementById('playhead');
     this.pitchModal = new PitchModal(this);
+    this.midiEditor = new MidiEditor(this);
     this.selectedTrack = null;
+    this.selectedClip = null;
+    this.clipboard = null;
 
     this.engine.onTimeUpdate = t => this._onTime(t);
     this.engine.onPlayState  = p => this._updateTransport(p);
@@ -31,114 +36,56 @@ export class App {
     });
   }
 
-  selectTrackByIndex(idx) {
-    const t = this.engine.tracks[idx];
-    if (t) this.selectTrack(t);
-  }
-
-  selectAdjacentTrack(delta) {
-    if (this.engine.tracks.length === 0) return;
-    const cur = this.selectedTrack ? this.engine.tracks.indexOf(this.selectedTrack) : -1;
-    const next = (cur + delta + this.engine.tracks.length) % this.engine.tracks.length;
-    this.selectTrack(this.engine.tracks[next]);
-  }
-
-  _handleKey(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-    if (this.pitchModal.backdrop.classList.contains('active')) {
-      if (e.code === 'Escape') this.pitchModal.close();
-      return;
-    }
-    if (e.code === 'Escape') {
-      e.preventDefault();
-      this.engine.tracks.forEach(t => {
-        if (t.hasSelection()) {
-          t.clearSelection();
-          if (t.el) {
-            const ov = t.el.querySelector('.selection-overlay');
-            const tb = t.el.querySelector('.selection-toolbar');
-            if (ov) ov.style.display = 'none';
-            if (tb) tb.classList.remove('active');
-          }
-        }
-      });
-      return;
-    }
-    const mod = e.ctrlKey || e.metaKey;
-
-    if (mod && e.code === 'KeyS') { e.preventDefault(); if (!document.getElementById('btn-save-project').disabled) this._saveProject(); return; }
-    if (mod && e.code === 'KeyO') { e.preventDefault(); this._loadProjectFlow(); return; }
-    if (mod && e.code === 'KeyE') { e.preventDefault(); if (!document.getElementById('btn-export').disabled) this._export(); return; }
-    if (mod && e.code === 'KeyN') {
-      e.preventDefault();
-      if (this.engine.tracks.length > 0 && confirm('全トラックを削除して新規プロジェクトにしますか？')) {
-        [...this.engine.tracks].forEach(t => this.deleteTrack(t));
+  selectClip(track, clip) {
+    this.selectTrack(track);
+    this.selectedClip = clip;
+    this.engine.tracks.forEach(t => {
+      for (const c of t.clips) {
+        if (c.el) c.el.classList.toggle('selected', c === clip);
       }
-      return;
-    }
-    if (mod) return;
+    });
+  }
 
-    if (e.code === 'Space')  { e.preventDefault(); if (this.engine.isPlaying) this.engine.pause(); else this.engine.play(); return; }
-    if (e.code === 'Enter')  { e.preventDefault(); this.engine.stop(); return; }
-    if (e.code === 'Home')   { e.preventDefault(); this.engine.seek(0); return; }
-    if (e.code === 'End')    { e.preventDefault(); this.engine.seek(this.engine.totalDuration()); return; }
-    if (e.code === 'ArrowLeft')  { e.preventDefault(); this.engine.seek(this.engine.currentPos() - (e.shiftKey ? 5 : 1)); return; }
-    if (e.code === 'ArrowRight') { e.preventDefault(); this.engine.seek(this.engine.currentPos() + (e.shiftKey ? 5 : 1)); return; }
-    if (e.code === 'ArrowUp')    { e.preventDefault(); this.selectAdjacentTrack(-1); return; }
-    if (e.code === 'ArrowDown')  { e.preventDefault(); this.selectAdjacentTrack(1); return; }
+  getGlobalDuration() {
+    let max = 5;
+    for (const t of this.engine.tracks) {
+      max = Math.max(max, t.effectiveDuration());
+    }
+    return max + 2;
+  }
 
-    if (e.code === 'KeyM' && this.selectedTrack) {
-      e.preventDefault();
-      this.selectedTrack.muted = !this.selectedTrack.muted;
-      const btn = this.selectedTrack.el && this.selectedTrack.el.querySelector('.knob-mini.mute');
-      if (btn) btn.classList.toggle('active', this.selectedTrack.muted);
-      this.engine._reapplySolo();
-      return;
-    }
-    if (e.code === 'KeyS' && this.selectedTrack) {
-      e.preventDefault();
-      this.selectedTrack.soloed = !this.selectedTrack.soloed;
-      const btn = this.selectedTrack.el && this.selectedTrack.el.querySelector('.knob-mini.solo');
-      if (btn) btn.classList.toggle('active', this.selectedTrack.soloed);
-      this.engine._reapplySolo();
-      return;
-    }
-    if ((e.code === 'Delete' || e.code === 'Backspace') && this.selectedTrack) {
-      e.preventDefault();
-      const t = this.selectedTrack;
-      if (confirm(`「${t.name}」を削除しますか？`)) {
-        this.selectedTrack = null;
-        this.deleteTrack(t);
-      }
-      return;
-    }
-    if (e.code === 'KeyP' && this.selectedTrack) {
-      e.preventDefault();
-      this.openPitchModal(this.selectedTrack);
-      return;
-    }
-    const digitMatch = e.code.match(/^Digit([1-9])$/);
-    if (digitMatch) {
-      e.preventDefault();
-      this.selectTrackByIndex(parseInt(digitMatch[1]) - 1);
+  layoutTrackClip(track, clip) {
+    if (!track.el || !clip.el) return;
+    const globalDur = this.getGlobalDuration();
+    const leftPct = (clip.offset / globalDur) * 100;
+    const widthPct = Math.max(1, (clip.duration / globalDur) * 100);
+    clip.el.style.left = leftPct + '%';
+    clip.el.style.width = widthPct + '%';
+  }
+
+  layoutAllClips() {
+    for (const t of this.engine.tracks) {
+      for (const c of t.clips) this.layoutTrackClip(t, c);
     }
   }
 
-  async deleteTrack(track) {
-    if (this.selectedTrack === track) this.selectedTrack = null;
-    this.engine.removeTrack(track);
-    track.el.remove();
-    if (this.engine.tracks.length === 0) this._renderEmptyState();
-    this.refreshAll();
+  drawClip(clip) {
+    if (!clip.canvas) return;
+    if (clip.type === 'audio') this._drawAudioClip(clip);
+    else this._drawMidiClip(clip);
   }
 
-  drawWave(track) {
-    const canvas = track.canvas;
-    if (!canvas) return;
-    const wrap = canvas.parentElement;
+  drawAllClipsOf(track) {
+    for (const c of track.clips) this.drawClip(c);
+  }
+
+  _drawAudioClip(clip) {
+    const canvas = clip.canvas;
+    if (!clip.buffer) return;
     const dpr = window.devicePixelRatio || 1;
-    const w = wrap.clientWidth || 600;
-    const h = 80;
+    const wrap = canvas.parentElement;
+    const w = Math.max(1, wrap.clientWidth);
+    const h = Math.max(1, wrap.clientHeight - 22);
     canvas.width = w * dpr;
     canvas.height = h * dpr;
     canvas.style.width = w + 'px';
@@ -146,64 +93,55 @@ export class App {
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, w, h);
-
-    track.computePeaks(Math.max(200, Math.floor(w)));
-    const peaks = track.peaks;
+    clip.computePeaks(Math.max(80, Math.floor(w)));
+    const peaks = clip.peaks;
     if (!peaks) return;
-
     const mid = h / 2;
-    const totalDur = track.buffer.duration;
-    const trimStartX = (track.trimStart / totalDur) * w;
-    const trimEndX = w - (track.trimEnd / totalDur) * w;
-
-    ctx.fillStyle = track.color + '30';
+    const color = clip.el ? clip.el.style.borderColor : '#0550C2';
+    ctx.fillStyle = color;
     const step = w / peaks.length;
     for (let i = 0; i < peaks.length; i++) {
-      const amp = peaks[i] * (mid * 0.9);
+      const amp = peaks[i] * (mid * 0.85);
       ctx.fillRect(i * step, mid - amp, Math.max(0.5, step), amp * 2);
     }
-
-    ctx.fillStyle = track.color;
-    const sStart = Math.max(0, Math.floor(trimStartX / step));
-    const sEnd = Math.min(peaks.length, Math.ceil(trimEndX / step));
-    for (let i = sStart; i < sEnd; i++) {
-      const amp = peaks[i] * (mid * 0.9);
-      ctx.fillRect(i * step, mid - amp, Math.max(0.5, step), amp * 2);
-    }
-
-    if (track.trimStart > 0) {
-      ctx.fillStyle = 'rgba(26,26,26,0.22)';
-      ctx.fillRect(0, 0, trimStartX, h);
-    }
-    if (track.trimEnd > 0) {
-      ctx.fillStyle = 'rgba(26,26,26,0.22)';
-      ctx.fillRect(trimEndX, 0, w - trimEndX, h);
-    }
   }
 
-  getGlobalDuration() {
-    let max = 5;
-    for (const t of this.engine.tracks) {
-      const end = t.offset + t.effectiveDuration();
-      if (end > max) max = end;
+  _drawMidiClip(clip) {
+    const canvas = clip.canvas;
+    const dpr = window.devicePixelRatio || 1;
+    const wrap = canvas.parentElement;
+    const w = Math.max(1, wrap.clientWidth);
+    const h = Math.max(1, wrap.clientHeight - 22);
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    if (clip.notes.length === 0) {
+      ctx.fillStyle = '#8A857A';
+      ctx.font = '600 10px "Noto Sans JP", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('ダブルクリックで編集', w / 2, h / 2);
+      return;
     }
-    return max + 2;
-  }
-
-  layoutTrackClip(track) {
-    if (!track.el || !track.buffer) return;
-    const clip = track.el.querySelector('.track-clip');
-    if (!clip) return;
-    const globalDur = this.getGlobalDuration();
-    const eff = track.effectiveDuration();
-    const leftPct = (track.offset / globalDur) * 100;
-    const widthPct = Math.max(2, (eff / globalDur) * 100);
-    clip.style.left = leftPct + '%';
-    clip.style.width = widthPct + '%';
-  }
-
-  layoutAllClips() {
-    this.engine.tracks.forEach(t => this.layoutTrackClip(t));
+    let minMidi = 127, maxMidi = 0;
+    for (const n of clip.notes) {
+      if (n.midi < minMidi) minMidi = n.midi;
+      if (n.midi > maxMidi) maxMidi = n.midi;
+    }
+    if (maxMidi - minMidi < 6) { const c = (minMidi + maxMidi) / 2; minMidi = Math.floor(c - 3); maxMidi = Math.ceil(c + 3); }
+    const color = clip.el ? clip.el.style.borderColor : '#0550C2';
+    ctx.fillStyle = color;
+    const rowH = h / (maxMidi - minMidi + 1);
+    for (const n of clip.notes) {
+      const x = (n.time / clip.duration) * w;
+      const wid = Math.max(2, (n.dur / clip.duration) * w);
+      const y = h - (n.midi - minMidi + 0.5) * rowH;
+      ctx.fillRect(x, y - rowH * 0.4, wid, rowH * 0.8);
+    }
   }
 
   refreshAll() {
@@ -217,38 +155,133 @@ export class App {
     this.engine.tracks.forEach((t, i) => {
       if (t.el) {
         t.el.querySelector('.track-num').textContent = `CH ${String(i + 1).padStart(2, '0')}`;
-        this.drawWave(t);
+        this.drawAllClipsOf(t);
       }
     });
   }
 
-  refreshTrackPitchBadge(track) {
-    if (!track.el) return;
-    const btn = track.el.querySelector('.knob-mini.pitch');
-    if (btn) btn.classList.toggle('active', track.pitchCorrected);
+  _renderTimeline() {
+    const total = Math.max(this.engine.totalDuration(), 30);
+    const globalDur = this.getGlobalDuration();
+    this.timelineEl.innerHTML = '';
+    const playhead = document.createElement('div');
+    playhead.className = 'timeline-playhead';
+    playhead.id = 'playhead';
+    this.timelineEl.appendChild(playhead);
+    this.playhead = playhead;
+
+    const bd = this.engine.beatDuration();
+    const numBeats = Math.ceil(globalDur / bd);
+    for (let i = 0; i <= numBeats; i++) {
+      const t = i * bd;
+      const xPct = (t / globalDur) * 100;
+      if (xPct > 100) break;
+      const tick = document.createElement('div');
+      tick.className = 'timeline-tick';
+      const isBar = i % this.engine.beatsPerBar === 0;
+      if (isBar) {
+        tick.classList.add('major');
+        tick.textContent = `${i / this.engine.beatsPerBar + 1}`;
+      }
+      tick.style.left = xPct + '%';
+      this.timelineEl.appendChild(tick);
+    }
+    this._updatePlayhead(this.engine.currentPos());
   }
 
-  openPitchModal(track) {
-    this.pitchModal.open(track);
+  _updatePlayhead(t) {
+    if (!this.playhead) return;
+    const globalDur = this.getGlobalDuration();
+    const xPct = (t / globalDur) * 100;
+    this.playhead.style.left = xPct + '%';
+    document.getElementById('time-current').textContent = formatTime(t);
+    this.engine.tracks.forEach(track => {
+      for (const c of track.clips) {
+        if (!c.el) continue;
+        const ph = c.el.querySelector('.clip-playhead');
+        if (t >= c.offset && t <= c.offset + c.duration) {
+          const localPct = ((t - c.offset) / c.duration) * 100;
+          if (ph) {
+            ph.style.display = 'block';
+            ph.style.left = localPct + '%';
+          }
+        } else if (ph) {
+          ph.style.display = 'none';
+        }
+      }
+    });
   }
 
-  openPitchModalForRange(track, start, end) {
-    return this.pitchModal.openForRange(track, start, end);
+  _onTime(t) {
+    this._updatePlayhead(t);
+  }
+
+  _updateTransport(isPlaying) {
+    document.getElementById('btn-play').classList.toggle('playing', isPlaying);
+    document.getElementById('btn-play').disabled = false;
+    document.getElementById('btn-pause').disabled = !isPlaying;
+    document.getElementById('btn-stop').disabled = !isPlaying;
+  }
+
+  _meterLoop() {
+    const fill = document.getElementById('master-meter-fill');
+    const update = () => {
+      const lv = this.engine.masterLevel();
+      fill.style.width = (lv * 100) + '%';
+      for (const t of this.engine.tracks) {
+        if (!t.el) continue;
+        const tf = t.el.querySelector('.track-meter-fill');
+        if (tf) tf.style.width = (t.peakLevel() * 100) + '%';
+      }
+      requestAnimationFrame(update);
+    };
+    update();
   }
 
   _bindGlobalEvents() {
-    document.getElementById('btn-play').addEventListener('click', () => this.engine.play());
+    const playBtn = document.getElementById('btn-play');
+    playBtn.disabled = false;
+    playBtn.addEventListener('click', () => this.engine.play());
     document.getElementById('btn-pause').addEventListener('click', () => this.engine.pause());
     document.getElementById('btn-stop').addEventListener('click', () => this.engine.stop());
-    document.getElementById('btn-export').addEventListener('click', () => this._export());
 
+    document.getElementById('btn-export').addEventListener('click', () => this._export());
     document.getElementById('btn-save-project').addEventListener('click', () => this._saveProject());
     document.getElementById('btn-load-project').addEventListener('click', () => this._loadProjectFlow());
-    document.getElementById('load-project-input').addEventListener('change', async e => {
+    document.getElementById('btn-add-midi-track').addEventListener('click', () => this._addMidiTrack());
+
+    document.getElementById('load-project-input').addEventListener('change', e => {
       const f = e.target.files[0];
-      if (f) await this._loadProjectFromFile(f);
+      if (f) this._loadProjectFromFile(f);
       e.target.value = '';
     });
+
+    const bpmInput = document.getElementById('bpm-input');
+    if (bpmInput) {
+      bpmInput.value = this.engine.bpm;
+      bpmInput.addEventListener('change', e => {
+        const v = parseFloat(e.target.value);
+        if (v >= 20 && v <= 300) {
+          this.engine.bpm = v;
+          this._renderTimeline();
+        }
+      });
+    }
+    const snapBtn = document.getElementById('snap-toggle');
+    if (snapBtn) {
+      snapBtn.classList.toggle('active', this.engine.snapEnabled);
+      snapBtn.addEventListener('click', () => {
+        this.engine.snapEnabled = !this.engine.snapEnabled;
+        snapBtn.classList.toggle('active', this.engine.snapEnabled);
+      });
+    }
+    const snapResSel = document.getElementById('snap-resolution');
+    if (snapResSel) {
+      snapResSel.value = this.engine.snapResolution;
+      snapResSel.addEventListener('change', e => {
+        this.engine.snapResolution = parseInt(e.target.value);
+      });
+    }
 
     document.getElementById('master-gain').addEventListener('input', e => {
       const v = parseFloat(e.target.value);
@@ -265,10 +298,7 @@ export class App {
 
     const dropTargets = [this.tracksEl, document.getElementById('add-track')];
     dropTargets.forEach(el => {
-      el.addEventListener('dragover', e => {
-        e.preventDefault();
-        this.tracksEl.classList.add('dragover');
-      });
+      el.addEventListener('dragover', e => { e.preventDefault(); this.tracksEl.classList.add('dragover'); });
       el.addEventListener('dragleave', () => this.tracksEl.classList.remove('dragover'));
       el.addEventListener('drop', e => {
         e.preventDefault();
@@ -286,17 +316,79 @@ export class App {
     window.addEventListener('keydown', e => this._handleKey(e));
 
     this.timelineEl.addEventListener('click', e => {
-      const total = this.engine.totalDuration();
-      if (total === 0) return;
+      const globalDur = this.getGlobalDuration();
       const rect = this.timelineEl.getBoundingClientRect();
       const x = e.clientX - rect.left;
-      this.engine.seek((x / rect.width) * total);
+      this.engine.seek((x / rect.width) * globalDur);
     });
 
     window.addEventListener('resize', () => {
-      this.engine.tracks.forEach(t => { if (t.el) this.drawWave(t); });
+      this.engine.tracks.forEach(t => this.drawAllClipsOf(t));
       this._renderTimeline();
     });
+  }
+
+  _handleKey(e) {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (this.pitchModal.backdrop.classList.contains('active')) {
+      if (e.code === 'Escape') this.pitchModal.close();
+      return;
+    }
+    if (this.midiEditor.isOpen()) {
+      this.midiEditor.handleKey(e);
+      return;
+    }
+    if (e.code === 'Escape') {
+      e.preventDefault();
+      this.engine.tracks.forEach(t => {
+        for (const c of t.clips) {
+          if (c.hasSelection && c.hasSelection()) {
+            c.clearSelection();
+            if (c.el) {
+              const ov = c.el.querySelector('.selection-overlay');
+              if (ov) ov.style.display = 'none';
+            }
+          }
+        }
+        if (t.el) {
+          const tb = t.el.querySelector('.selection-toolbar');
+          if (tb) tb.classList.remove('active');
+        }
+      });
+      return;
+    }
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.code === 'KeyS') { e.preventDefault(); this._saveProject(); return; }
+    if (mod && e.code === 'KeyO') { e.preventDefault(); this._loadProjectFlow(); return; }
+    if (mod && e.code === 'KeyE') { e.preventDefault(); this._export(); return; }
+    if (mod && e.code === 'KeyC' && this.selectedClip) { e.preventDefault(); this.clipboard = this.selectedClip; return; }
+    if (mod && e.code === 'KeyV' && this.clipboard && this.selectedTrack) {
+      e.preventDefault();
+      this._pasteClipAtPlayhead();
+      return;
+    }
+    if (mod && e.code === 'KeyD' && this.selectedClip) {
+      e.preventDefault();
+      this.duplicateClip(this.selectedTrack, this.selectedClip);
+      return;
+    }
+    if (mod) return;
+    if (e.code === 'Space')  { e.preventDefault(); if (this.engine.isPlaying) this.engine.pause(); else this.engine.play(); return; }
+    if (e.code === 'Enter')  { e.preventDefault(); this.engine.stop(); return; }
+    if (e.code === 'Home')   { e.preventDefault(); this.engine.seek(0); return; }
+    if (e.code === 'End')    { e.preventDefault(); this.engine.seek(this.engine.totalDuration()); return; }
+    if (e.code === 'ArrowLeft')  { e.preventDefault(); this.engine.seek(this.engine.currentPos() - (e.shiftKey ? 5 : 1)); return; }
+    if (e.code === 'ArrowRight') { e.preventDefault(); this.engine.seek(this.engine.currentPos() + (e.shiftKey ? 5 : 1)); return; }
+    if (e.code === 'KeyS' && this.selectedClip) {
+      e.preventDefault();
+      this.splitClipAtPlayhead(this.selectedTrack, this.selectedClip);
+      return;
+    }
+    if ((e.code === 'Delete' || e.code === 'Backspace') && this.selectedClip) {
+      e.preventDefault();
+      this.deleteClip(this.selectedTrack, this.selectedClip);
+      return;
+    }
   }
 
   async _addTrackFlow() {
@@ -325,9 +417,13 @@ export class App {
     try {
       const arr = await file.arrayBuffer();
       const buf = await this.engine.ctx.decodeAudioData(arr);
-      const track = new Track(file, buf);
+      const trackName = file.name.replace(/\.[^.]+$/, '');
+      const track = new Track(trackName, undefined, 'audio');
       this.engine.addTrack(track);
       appendTrackView(this, track);
+      const clip = new AudioClip(buf, trackName);
+      track.addClip(clip);
+      renderClips(this, track);
       this.refreshAll();
     } catch (err) {
       alert('読み込み失敗: ' + err.message);
@@ -335,78 +431,112 @@ export class App {
     this._hideOverlay();
   }
 
-  async _saveProject() {
-    const project = serializeProject(this.engine);
-    const json = JSON.stringify(project, null, 2);
-    const filename = defaultProjectFilename();
-    if (isElectron) {
-      const res = await window.electron.showSaveDialog({
-        title: 'プロジェクトを保存',
-        defaultPath: filename,
-        filters: [{ name: 'OPEN MIX project', extensions: ['json'] }],
-      });
-      if (res.canceled || !res.filePath) return;
-      try {
-        await window.electron.writeFile(res.filePath, json);
-      } catch (err) {
-        alert('保存失敗: ' + err.message);
-      }
-    } else {
-      const blob = projectToBlob(project);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
+  _addMidiTrack() {
+    this.engine.ensure();
+    const track = new Track('MIDIトラック', undefined, 'midi');
+    this.engine.addTrack(track);
+    appendTrackView(this, track);
+    const clip = new MidiClip('MIDI 1');
+    clip.offset = this.engine.snapTime(this.engine.currentPos());
+    clip.duration = this.engine.barDuration();
+    track.addClip(clip);
+    renderClips(this, track);
+    this.refreshAll();
   }
 
-  async _loadProjectFlow() {
-    if (isElectron) {
-      const res = await window.electron.showOpenDialog({
-        title: 'プロジェクトを開く',
-        filters: [{ name: 'OPEN MIX project', extensions: ['json'] }],
-        properties: ['openFile'],
-      });
-      if (res.canceled || !res.filePaths || !res.filePaths.length) return;
-      const data = await window.electron.readFile(res.filePaths[0]);
-      const name = res.filePaths[0].split(/[\\/]/).pop();
-      const file = new File([data], name, { type: 'application/json' });
-      await this._loadProjectFromFile(file);
-    } else {
-      document.getElementById('load-project-input').click();
+  splitClipAtPlayhead(track, clip) {
+    const t = this.engine.currentPos();
+    if (t <= clip.offset || t >= clip.offset + clip.duration) {
+      alert('再生位置がクリップ内にありません。');
+      return;
     }
-  }
-
-  async _loadProjectFromFile(file) {
-    try {
-      const project = await loadProjectFromFile(file);
-      if (this.engine.tracks.length === 0) {
-        alert('先に音声ファイルを読み込んでください。プロジェクトはファイル名でマッチします。');
-        return;
-      }
-      const masterSlider = document.getElementById('master-gain');
-      const masterDisp = document.getElementById('master-gain-val');
-      const result = applyProject(this.engine, masterSlider, masterDisp, project);
-      this.engine.tracks.forEach(t => {
-        refreshTrackUIValues(t);
-        if (t.el) {
-          const pc = t.el.querySelector('.plugin-chain');
-          if (pc) renderPluginChain(this, t, pc);
+    const splitTime = t - clip.offset;
+    if (clip.type === 'audio') {
+      const second = new AudioClip(clip.buffer, clip.name + ' (2)');
+      second.offset = t;
+      second.trimStart = clip.trimStart + splitTime;
+      second.duration = clip.duration - splitTime;
+      second.gain = clip.gain;
+      clip.duration = splitTime;
+      track.addClip(second);
+    } else {
+      const second = new MidiClip(clip.name + ' (2)');
+      second.offset = t;
+      second.duration = clip.duration - splitTime;
+      second.gain = clip.gain;
+      for (const n of clip.notes) {
+        if (n.time >= splitTime) {
+          second.notes.push({ ...n, time: n.time - splitTime });
         }
-      });
-      this.refreshAll();
-      let msg = `プロジェクト適用: ${result.matched}/${result.totalInProject} トラックがマッチ`;
-      if (result.unmatched.length > 0) {
-        msg += '\nマッチしなかったファイル名:\n' + result.unmatched.join('\n');
       }
-      alert(msg);
-    } catch (err) {
-      alert('プロジェクト読み込み失敗: ' + err.message);
+      clip.notes = clip.notes.filter(n => n.time < splitTime);
+      clip.duration = splitTime;
+      track.addClip(second);
     }
+    renderClips(this, track);
+    this.refreshAll();
+  }
+
+  duplicateClip(track, clip) {
+    let newClip;
+    if (clip.type === 'audio') {
+      newClip = new AudioClip(clip.buffer, clip.name + ' (copy)');
+      newClip.trimStart = clip.trimStart;
+      newClip.duration = clip.duration;
+      newClip.fadeIn = clip.fadeIn;
+      newClip.fadeOut = clip.fadeOut;
+    } else {
+      newClip = new MidiClip(clip.name + ' (copy)');
+      newClip.duration = clip.duration;
+      newClip.notes = clip.notes.map(n => ({ ...n }));
+    }
+    newClip.gain = clip.gain;
+    newClip.offset = clip.offset + clip.duration;
+    track.addClip(newClip);
+    renderClips(this, track);
+    this.refreshAll();
+  }
+
+  deleteClip(track, clip) {
+    if (!confirm(`クリップ「${clip.name}」を削除しますか？`)) return;
+    track.removeClip(clip);
+    if (this.selectedClip === clip) this.selectedClip = null;
+    renderClips(this, track);
+    this.refreshAll();
+  }
+
+  _pasteClipAtPlayhead() {
+    if (!this.clipboard || !this.selectedTrack) return;
+    const src = this.clipboard;
+    if (src.type !== this.selectedTrack.type) {
+      alert('クリップの種類とトラックの種類が一致しません。');
+      return;
+    }
+    let newClip;
+    if (src.type === 'audio') {
+      newClip = new AudioClip(src.buffer, src.name + ' (paste)');
+      newClip.trimStart = src.trimStart;
+      newClip.duration = src.duration;
+      newClip.fadeIn = src.fadeIn; newClip.fadeOut = src.fadeOut;
+    } else {
+      newClip = new MidiClip(src.name + ' (paste)');
+      newClip.duration = src.duration;
+      newClip.notes = src.notes.map(n => ({ ...n }));
+    }
+    newClip.gain = src.gain;
+    newClip.offset = this.engine.snapTime(this.engine.currentPos());
+    this.selectedTrack.addClip(newClip);
+    renderClips(this, this.selectedTrack);
+    this.refreshAll();
+  }
+
+  async deleteTrack(track) {
+    if (this.selectedTrack === track) this.selectedTrack = null;
+    if (this.selectedClip && track.clips.indexOf(this.selectedClip) >= 0) this.selectedClip = null;
+    this.engine.removeTrack(track);
+    track.el.remove();
+    if (this.engine.tracks.length === 0) this._renderEmptyState();
+    this.refreshAll();
   }
 
   _renderEmptyState() {
@@ -415,88 +545,141 @@ export class App {
       <div class="tracks-empty">
         <div class="tracks-empty-msg">音源ファイルをここにドロップ</div>
         <div class="tracks-empty-sub">WAV · MP3 · M4A · OGG · 複数同時可</div>
-      </div>`;
+      </div>
+    `;
   }
 
-  _renderTimeline() {
-    const total = this.engine.totalDuration();
-    this.timelineEl.querySelectorAll('.timeline-tick').forEach(n => n.remove());
-    if (total === 0) return;
-    const width = this.timelineEl.clientWidth;
-    const interval = total < 30 ? 1 : total < 120 ? 5 : total < 300 ? 10 : 30;
-    for (let t = 0; t <= total; t += interval) {
-      const x = (t / total) * width;
-      const tick = document.createElement('div');
-      tick.className = 'timeline-tick' + (t % (interval * 5) === 0 ? ' major' : '');
-      tick.style.left = x + 'px';
-      tick.textContent = formatTime(t);
-      this.timelineEl.appendChild(tick);
+  async runClipSelectionOp(track, clip, op) {
+    if (clip.type !== 'audio') return;
+    if (!clip.hasSelection() && op !== 'clear') return;
+    const s = clip.selectionStart, e = clip.selectionEnd;
+    const { silenceClipRange, normalizeClipRange, applyGainToClipRange, applyFadeToClipRange, deleteClipRange } = await import('./clip-edits.js');
+    switch (op) {
+      case 'silence':   silenceClipRange(clip, s, e); this.drawClip(clip); break;
+      case 'normalize': normalizeClipRange(clip, s, e); this.drawClip(clip); break;
+      case 'gain-up':   applyGainToClipRange(clip, s, e, Math.pow(10, 3/20)); this.drawClip(clip); break;
+      case 'gain-down': applyGainToClipRange(clip, s, e, Math.pow(10, -3/20)); this.drawClip(clip); break;
+      case 'fade-in':   applyFadeToClipRange(clip, s, e, 'in'); this.drawClip(clip); break;
+      case 'fade-out':  applyFadeToClipRange(clip, s, e, 'out'); this.drawClip(clip); break;
+      case 'delete':
+        if (!confirm(`選択範囲（${(e - s).toFixed(2)}秒）を削除しますか？`)) return;
+        deleteClipRange(clip, s, e);
+        this.drawClip(clip);
+        this.refreshAll();
+        break;
+      case 'pitch':
+        await this.openPitchModalForClipRange(track, clip, s, e);
+        this.drawClip(clip);
+        break;
+      case 'clear':
+        clip.clearSelection();
+        break;
     }
   }
 
-  _onTime(t) {
-    document.getElementById('time-current').textContent = formatTime(t);
-    const total = this.engine.totalDuration();
-    if (total > 0) {
-      const x = (t / total) * this.timelineEl.clientWidth;
-      this.playhead.style.left = x + 'px';
-    } else this.playhead.style.left = '0px';
+  openPitchModalForClip(track, clip) {
+    this.pitchModal.openForClip(track, clip);
+  }
+  openPitchModalForClipRange(track, clip, start, end) {
+    return this.pitchModal.openForClipRange(track, clip, start, end);
+  }
+  refreshTrackPitchBadge(track) {}
+
+  openMidiEditor(track, clip) {
+    this.midiEditor.open(track, clip);
   }
 
-  _updateTransport(playing) {
+  async _saveProject() {
     const has = this.engine.tracks.length > 0;
-    document.getElementById('btn-play').disabled  = !has || playing;
-    document.getElementById('btn-pause').disabled = !has || !playing;
-    document.getElementById('btn-stop').disabled  = !has;
-    document.getElementById('btn-play').classList.toggle('playing', playing);
+    if (!has) return;
+    const json = serializeProject(this.engine);
+    if (isElectron) {
+      const res = await window.electron.showSaveDialog({
+        title: 'プロジェクトを保存',
+        defaultPath: defaultProjectFilename(),
+        filters: [{ name: 'Project', extensions: ['json'] }],
+      });
+      if (res.canceled || !res.filePath) return;
+      try { await window.electron.writeFile(res.filePath, json); }
+      catch (err) { alert('保存失敗: ' + err.message); }
+    } else {
+      const blob = projectToBlob(json);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = defaultProjectFilename(); a.click();
+      URL.revokeObjectURL(url);
+    }
   }
 
-  _meterLoop() {
-    const update = () => {
-      if (this.engine.ctx) {
-        this.engine.tracks.forEach(t => {
-          if (!t.el) return;
-          const fill = t.el.querySelector('.track-meter-fill');
-          if (fill) fill.style.width = Math.min(100, t.peakLevel() * 100) + '%';
-        });
-        const mLvl = this.engine.masterLevel();
-        const mFill = document.getElementById('master-meter-fill');
-        if (mFill) mFill.style.width = Math.min(100, mLvl * 100) + '%';
+  async _loadProjectFlow() {
+    if (isElectron) {
+      const res = await window.electron.showOpenDialog({
+        title: 'プロジェクトを読み込み',
+        filters: [{ name: 'Project', extensions: ['json'] }],
+        properties: ['openFile'],
+      });
+      if (res.canceled || !res.filePaths || res.filePaths.length === 0) return;
+      const p = res.filePaths[0];
+      const data = await window.electron.readFile(p);
+      const name = p.split(/[\\/]/).pop();
+      const file = new File([data], name, { type: 'application/json' });
+      this._loadProjectFromFile(file);
+    } else {
+      document.getElementById('load-project-input').click();
+    }
+  }
+
+  async _loadProjectFromFile(file) {
+    try {
+      const project = await loadProjectFromFile(file);
+      const bufferByName = {};
+      for (const t of this.engine.tracks) {
+        for (const c of t.clips) {
+          if (c.type === 'audio' && c.buffer) bufferByName[c.name] = c.buffer;
+        }
       }
-      requestAnimationFrame(update);
-    };
-    update();
+      const masterSlider = document.getElementById('master-gain');
+      const masterDisp = document.getElementById('master-gain-val');
+      const result = applyProject(this.engine, masterSlider, masterDisp, project, bufferByName);
+      this.engine.tracks.forEach(t => {
+        refreshTrackUIValues(t);
+        renderClips(this, t);
+        if (t.el) {
+          const pc = t.el.querySelector('.plugin-chain');
+          if (pc) renderPluginChain(this, t, pc);
+        }
+      });
+      this.refreshAll();
+      if (result && result.missing && result.missing.length > 0) {
+        alert(`一部のオーディオ参照を解決できませんでした：\n${result.missing.join('\n')}`);
+      }
+    } catch (err) {
+      alert('プロジェクト読み込み失敗: ' + err.message);
+    }
   }
 
   async _export() {
+    if (this.engine.tracks.length === 0) return;
     this._showOverlay('書き出し中…');
     try {
       const blob = await this.engine.renderToWav(p => {
         document.getElementById('overlay-fill').style.width = (p * 100) + '%';
       });
-      const filename = 'openmix_' + new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 12) + '.wav';
-
       if (isElectron) {
         const res = await window.electron.showSaveDialog({
           title: 'WAVを書き出し',
-          defaultPath: filename,
-          filters: [{ name: 'WAV audio', extensions: ['wav'] }],
+          defaultPath: `mix_${Date.now()}.wav`,
+          filters: [{ name: 'WAV', extensions: ['wav'] }],
         });
-        if (res.canceled || !res.filePath) {
-          this._hideOverlay();
-          return;
+        if (!res.canceled && res.filePath) {
+          const arr = new Uint8Array(await blob.arrayBuffer());
+          await window.electron.writeFile(res.filePath, arr);
         }
-        const arr = new Uint8Array(await blob.arrayBuffer());
-        await window.electron.writeFile(res.filePath, arr);
       } else {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        a.href = url; a.download = `mix_${Date.now()}.wav`; a.click();
+        URL.revokeObjectURL(url);
       }
     } catch (err) {
       alert('書き出し失敗: ' + err.message);
@@ -509,5 +692,7 @@ export class App {
     document.getElementById('overlay-fill').style.width = '0%';
     document.getElementById('overlay').classList.add('active');
   }
-  _hideOverlay() { document.getElementById('overlay').classList.remove('active'); }
+  _hideOverlay() {
+    document.getElementById('overlay').classList.remove('active');
+  }
 }

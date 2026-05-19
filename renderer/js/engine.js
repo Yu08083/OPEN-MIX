@@ -15,6 +15,12 @@ export class Engine {
 
     this.tracks = [];
 
+    this.bpm = 120;
+    this.beatsPerBar = 4;
+    this.beatUnit = 4;
+    this.snapEnabled = true;
+    this.snapResolution = 4;
+
     this.onTimeUpdate = () => {};
     this.onPlayState = () => {};
   }
@@ -62,7 +68,7 @@ export class Engine {
   }
 
   anySoloed() {
-    return this.tracks.some(t => t.soloed && t.buffer);
+    return this.tracks.some(t => t.soloed && t.clips.length > 0);
   }
 
   _reapplySolo() {
@@ -73,9 +79,18 @@ export class Engine {
   totalDuration() {
     let max = 0;
     this.tracks.forEach(t => {
-      if (t.buffer) max = Math.max(max, t.offset + t.effectiveDuration());
+      max = Math.max(max, t.effectiveDuration());
     });
     return max;
+  }
+
+  beatDuration() { return 60 / this.bpm; }
+  barDuration() { return this.beatDuration() * this.beatsPerBar; }
+
+  snapTime(t) {
+    if (!this.snapEnabled) return t;
+    const grid = this.beatDuration() * (4 / this.snapResolution);
+    return Math.round(t / grid) * grid;
   }
 
   play() {
@@ -87,7 +102,7 @@ export class Engine {
     if (this.pausePos >= total) this.pausePos = 0;
 
     const when = this.ctx.currentTime + 0.05;
-    this.tracks.forEach(t => t.startSource(this.ctx, when, this.pausePos));
+    this.tracks.forEach(t => t.scheduleClips(this.ctx, when, this.pausePos));
     this.startTime = when - this.pausePos;
     this.isPlaying = true;
     this.onPlayState(true);
@@ -97,14 +112,14 @@ export class Engine {
   pause() {
     if (!this.isPlaying) return;
     this.pausePos = clamp(this.ctx.currentTime - this.startTime, 0, this.totalDuration());
-    this.tracks.forEach(t => t.stopSource());
+    this.tracks.forEach(t => t.stopAllSources());
     this.isPlaying = false;
     this.onPlayState(false);
     this._stopTick();
   }
 
   stop() {
-    this.tracks.forEach(t => t.stopSource());
+    this.tracks.forEach(t => t.stopAllSources());
     this.isPlaying = false;
     this.pausePos = 0;
     this.onPlayState(false);
@@ -155,7 +170,7 @@ export class Engine {
 
   async renderToWav(progressCb) {
     const total = this.totalDuration();
-    if (total === 0) throw new Error('No tracks loaded');
+    if (total === 0) throw new Error('クリップが配置されていません');
 
     const sr = this.ctx.sampleRate;
     const off = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
@@ -167,9 +182,8 @@ export class Engine {
     const anySolo = this.anySoloed();
 
     for (const t of this.tracks) {
-      if (!t.buffer) continue;
-      const { src, bufOffset, duration } = t.cloneGraph(off, masterG, ir, anySolo);
-      try { src.start(t.offset, bufOffset, duration); } catch (e) {}
+      if (t.clips.length === 0) continue;
+      t.cloneGraphForOffline(off, masterG, ir, anySolo);
     }
 
     progressCb && progressCb(0.3);

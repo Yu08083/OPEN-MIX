@@ -1,6 +1,6 @@
 {
   "name": "open-mix",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Open source vocal mix editor",
   "main": "electron/main.js",
   "author": "Yu08083",

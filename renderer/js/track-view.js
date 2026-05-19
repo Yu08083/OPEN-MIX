@@ -1,5 +1,6 @@
 import { escapeHtml, formatTime, gainToDb, panLabel } from './utils.js';
 import { renderPluginChain } from './plugin-chain-view.js';
+import { AudioClip, MidiClip } from './clip.js';
 
 export function appendTrackView(app, track) {
   if (app.engine.tracks.length === 1) {
@@ -7,62 +8,47 @@ export function appendTrackView(app, track) {
     app.tracksEl.innerHTML = '';
   }
   const el = document.createElement('div');
-  el.className = 'track';
+  el.className = 'track ' + (track.type === 'midi' ? 'midi-track' : 'audio-track');
   el.style.setProperty('--track-color', track.color);
   el.innerHTML = trackTemplate(track, app.engine.tracks.indexOf(track));
   track.el = el;
-  track.canvas = el.querySelector('.track-wave-canvas');
   app.tracksEl.appendChild(el);
   bindTrackEvents(app, track, el);
   const pluginContainer = el.querySelector('.plugin-chain');
   if (pluginContainer) renderPluginChain(app, track, pluginContainer);
+  renderClips(app, track);
   requestAnimationFrame(() => {
     app.layoutAllClips();
-    app.engine.tracks.forEach(t => { if (t.el) app.drawWave(t); });
+    app.engine.tracks.forEach(t => app.drawAllClipsOf(t));
   });
 }
 
 function trackTemplate(track, index) {
   const ch = `CH ${String(index + 1).padStart(2, '0')}`;
-  const dur = track.buffer.duration;
   return `
     <div class="track-color"></div>
     <div class="track-controls">
       <div class="track-name-row">
         <span class="track-num">${ch}</span>
         <input class="track-name" type="text" value="${escapeHtml(track.name)}">
-        <button class="track-delete" title="削除">×</button>
+        <button class="track-delete" title="トラックを削除">×</button>
       </div>
+      <div class="track-type-badge">${track.type === 'midi' ? 'MIDI' : 'AUDIO'}</div>
       <div class="track-mix-row">
         <div class="ms-buttons">
           <button class="knob-mini mute" title="ミュート">M</button>
           <button class="knob-mini solo" title="ソロ">S</button>
         </div>
-        <button class="knob-mini pitch ${track.pitchCorrected ? 'active' : ''}" title="ピッチ補正">ピッチ</button>
+        ${track.type === 'audio' ? '<button class="knob-mini pitch" title="ピッチ補正">ピッチ</button>' : ''}
       </div>
       ${faderRow('音量', 'gain', 0, 2, 0.01, track.gain, gainToDb(track.gain))}
       ${faderRow('パン', 'pan', -1, 1, 0.01, track.pan, panLabel(track.pan))}
       <div class="track-meter"><div class="track-meter-fill"></div></div>
-      <div class="section-toggle edit-toggle"><span>編集</span><span class="chevron">›</span></div>
-      <div class="edit-rack">
-        ${faderRow('オフセット', 'offset', 0, 60, 0.001, track.offset, track.offset.toFixed(3) + 's')}
-        ${faderRow('始端カット', 'trimStart', 0, Math.max(0, dur - 0.1), 0.001, track.trimStart, track.trimStart.toFixed(3) + 's')}
-        ${faderRow('終端カット', 'trimEnd', 0, Math.max(0, dur - 0.1), 0.001, track.trimEnd, track.trimEnd.toFixed(3) + 's')}
-        ${faderRow('フェードイン', 'fadeIn', 0, 10, 0.001, track.fadeIn, track.fadeIn.toFixed(3) + 's')}
-        ${faderRow('フェードアウト', 'fadeOut', 0, 10, 0.001, track.fadeOut, track.fadeOut.toFixed(3) + 's')}
-      </div>
       <div class="section-toggle fx-toggle"><span>エフェクト</span><span class="chevron">›</span></div>
     </div>
-    <div class="track-wave-wrap">
-      <span class="track-offset-display">${offsetLabel(track)}</span>
+    <div class="track-clips-area">
+      <span class="track-offset-display"></span>
       <div class="selection-toolbar"></div>
-      <div class="track-clip" style="border-color:${track.color}; background:${track.color}1A">
-        <div class="clip-header" title="ドラッグして位置を変更">
-          <span class="clip-name">${escapeHtml(track.name)}</span>
-        </div>
-        <canvas class="track-wave-canvas"></canvas>
-        <div class="selection-overlay"></div>
-      </div>
     </div>
     <div class="fx-rack">
       ${fxModule('ハイパスフィルタ', 'HPF', [
@@ -87,17 +73,12 @@ function trackTemplate(track, index) {
   `;
 }
 
-function offsetLabel(track) {
-  const eff = track.buffer.duration - track.trimStart - track.trimEnd;
-  return `${formatTime(track.offset)} · ${formatTime(Math.max(0, eff))}`;
-}
-
 function faderRow(label, p, min, max, step, value, display) {
   return `
     <div class="fader-row">
       <span class="fader-label">${label}</span>
       <input type="range" class="slider" min="${min}" max="${max}" step="${step}" value="${value}" data-p="${p}">
-      <span class="fader-value" data-d="${p}">${display}</span>
+      <span class="fader-value editable-value" data-d="${p}">${display}</span>
     </div>
   `;
 }
@@ -119,21 +100,274 @@ function fxParam(label, fx, min, max, step, value, display) {
     <div class="fx-param">
       <span>${label}</span>
       <input type="range" class="slider" min="${min}" max="${max}" step="${step}" value="${value}" data-fx="${fx}">
-      <span data-fxd="${fx}">${display}</span>
+      <span class="editable-value" data-fxd="${fx}">${display}</span>
     </div>
   `;
+}
+
+export function renderClips(app, track) {
+  if (!track.el) return;
+  const area = track.el.querySelector('.track-clips-area');
+  if (!area) return;
+  area.querySelectorAll('.track-clip').forEach(n => n.remove());
+  for (const clip of track.clips) {
+    const clipEl = createClipElement(app, track, clip);
+    area.appendChild(clipEl);
+  }
+}
+
+function createClipElement(app, track, clip) {
+  const el = document.createElement('div');
+  el.className = 'track-clip ' + (clip.type === 'midi' ? 'midi-clip' : 'audio-clip');
+  el.dataset.clipId = clip.id;
+  el.style.borderColor = track.color;
+  el.style.background = track.color + '1A';
+  el.innerHTML = `
+    <div class="clip-header" title="ドラッグして位置変更">
+      <span class="clip-name">${escapeHtml(clip.name)}</span>
+      <div class="clip-actions">
+        <button class="clip-action-btn" data-act="split" title="再生位置で分割">⊟</button>
+        <button class="clip-action-btn" data-act="duplicate" title="複製">⎘</button>
+        <button class="clip-action-btn" data-act="delete" title="削除">×</button>
+      </div>
+    </div>
+    <canvas class="clip-canvas"></canvas>
+    <div class="selection-overlay"></div>
+    <div class="clip-resize-left" title="左端をドラッグで開始位置を変更"></div>
+    <div class="clip-resize-right" title="右端をドラッグで長さを変更"></div>
+  `;
+  clip.el = el;
+  clip.canvas = el.querySelector('.clip-canvas');
+  bindClipEvents(app, track, clip, el);
+  return el;
+}
+
+function bindClipEvents(app, track, clip, el) {
+  const header = el.querySelector('.clip-header');
+  const resizeLeft = el.querySelector('.clip-resize-left');
+  const resizeRight = el.querySelector('.clip-resize-right');
+  const overlay = el.querySelector('.selection-overlay');
+  const toolbar = track.el.querySelector('.selection-toolbar');
+
+  bindClipDrag(app, track, clip, header);
+  bindClipResize(app, track, clip, resizeLeft, 'left');
+  bindClipResize(app, track, clip, resizeRight, 'right');
+
+  el.querySelectorAll('.clip-action-btn').forEach(btn => {
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      const act = btn.dataset.act;
+      if (act === 'split') app.splitClipAtPlayhead(track, clip);
+      else if (act === 'duplicate') app.duplicateClip(track, clip);
+      else if (act === 'delete') app.deleteClip(track, clip);
+    });
+  });
+
+  if (clip.type === 'audio') {
+    bindAudioClipSelection(app, track, clip, el, overlay, toolbar);
+  } else {
+    el.addEventListener('dblclick', e => {
+      if (e.target.closest('.clip-actions, .clip-resize-left, .clip-resize-right, .clip-header')) return;
+      app.openMidiEditor(track, clip);
+    });
+    el.addEventListener('mousedown', e => {
+      if (e.target.closest('.clip-actions, .clip-resize-left, .clip-resize-right, .clip-header')) return;
+      app.selectClip(track, clip);
+    });
+  }
+}
+
+function bindClipDrag(app, track, clip, headerEl) {
+  headerEl.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.clip-actions')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    app.selectClip(track, clip);
+
+    const area = track.el.querySelector('.track-clips-area');
+    const areaRect = area.getBoundingClientRect();
+    const globalDur = app.getGlobalDuration();
+    const startX = e.clientX;
+    const startOffset = clip.offset;
+
+    const onMove = me => {
+      const dx = me.clientX - startX;
+      const dt = (dx / areaRect.width) * globalDur;
+      let newOffset = Math.max(0, startOffset + dt);
+      newOffset = app.engine.snapTime(newOffset);
+      clip.offset = newOffset;
+      app.layoutAllClips();
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      app.refreshAll();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+}
+
+function bindClipResize(app, track, clip, handle, side) {
+  if (!handle) return;
+  handle.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const area = track.el.querySelector('.track-clips-area');
+    const areaRect = area.getBoundingClientRect();
+    const globalDur = app.getGlobalDuration();
+    const startX = e.clientX;
+    const startOffset = clip.offset;
+    const startTrim = clip.type === 'audio' ? clip.trimStart : 0;
+    const startDur = clip.duration;
+    const bufDur = clip.type === 'audio' && clip.buffer ? clip.buffer.duration : Infinity;
+
+    const onMove = me => {
+      const dx = me.clientX - startX;
+      const dt = (dx / areaRect.width) * globalDur;
+      if (side === 'left') {
+        let delta = dt;
+        if (clip.type === 'audio') {
+          const newTrim = Math.max(0, Math.min(bufDur - 0.05, startTrim + delta));
+          const actualDelta = newTrim - startTrim;
+          clip.trimStart = newTrim;
+          clip.offset = Math.max(0, app.engine.snapTime(startOffset + actualDelta));
+          clip.duration = Math.max(0.05, startDur - actualDelta);
+        } else {
+          const snappedOffset = Math.max(0, app.engine.snapTime(startOffset + delta));
+          const actualDelta = snappedOffset - startOffset;
+          clip.offset = snappedOffset;
+          clip.duration = Math.max(0.1, startDur - actualDelta);
+        }
+      } else {
+        let newDur = Math.max(0.05, startDur + dt);
+        newDur = app.engine.snapTime(clip.offset + newDur) - clip.offset;
+        newDur = Math.max(0.05, newDur);
+        if (clip.type === 'audio' && clip.buffer) {
+          newDur = Math.min(newDur, bufDur - clip.trimStart);
+        }
+        clip.duration = newDur;
+      }
+      clip.invalidatePeaks && clip.invalidatePeaks();
+      app.layoutAllClips();
+      app.drawClip(clip);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      app.refreshAll();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+}
+
+function bindAudioClipSelection(app, track, clip, clipEl, overlay, toolbar) {
+  let downX = null;
+  let downTime = null;
+  let dragging = false;
+  const DRAG_THRESHOLD = 5;
+
+  const xToTimeInClip = clientX => {
+    const rect = clipEl.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    return (x / rect.width) * clip.duration;
+  };
+
+  clipEl.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.clip-header, .clip-actions, .clip-resize-left, .clip-resize-right, .selection-toolbar')) return;
+    downX = e.clientX;
+    downTime = xToTimeInClip(e.clientX);
+    dragging = false;
+    app.selectClip(track, clip);
+  });
+
+  window.addEventListener('mousemove', e => {
+    if (downX === null) return;
+    if (!dragging && Math.abs(e.clientX - downX) < DRAG_THRESHOLD) return;
+    dragging = true;
+    const currentTime = xToTimeInClip(e.clientX);
+    clip.selectionStart = Math.min(downTime, currentTime);
+    clip.selectionEnd = Math.max(downTime, currentTime);
+    updateClipSelection(app, track, clip);
+  });
+
+  window.addEventListener('mouseup', e => {
+    if (downX === null) return;
+    if (!dragging) {
+      app.engine.seek(clip.offset + downTime);
+    } else {
+      if (clip.selectionEnd - clip.selectionStart < 0.02) {
+        clip.clearSelection();
+      }
+      updateClipSelection(app, track, clip);
+    }
+    downX = null;
+    downTime = null;
+    dragging = false;
+  });
+}
+
+function updateClipSelection(app, track, clip) {
+  if (!clip.el) return;
+  const overlay = clip.el.querySelector('.selection-overlay');
+  const toolbar = track.el.querySelector('.selection-toolbar');
+  if (!clip.hasSelection()) {
+    overlay.style.display = 'none';
+    toolbar.classList.remove('active');
+    return;
+  }
+  const leftPct = (clip.selectionStart / clip.duration) * 100;
+  const widthPct = ((clip.selectionEnd - clip.selectionStart) / clip.duration) * 100;
+  overlay.style.display = 'block';
+  overlay.style.left = leftPct + '%';
+  overlay.style.width = widthPct + '%';
+
+  app.activeSelectionClip = clip;
+  app.activeSelectionTrack = track;
+
+  const selDur = clip.selectionEnd - clip.selectionStart;
+  toolbar.innerHTML = `
+    <span class="sel-info">
+      <span class="sel-info-label">範囲選択</span>
+      <span class="sel-info-time">${escapeHtml(clip.name)} : ${clip.selectionStart.toFixed(2)}s → ${clip.selectionEnd.toFixed(2)}s (${selDur.toFixed(2)}s)</span>
+    </span>
+    <div class="sel-actions">
+      <button class="sel-btn" data-op="silence">無音化</button>
+      <button class="sel-btn" data-op="normalize">正規化</button>
+      <button class="sel-btn" data-op="gain-up">音量+</button>
+      <button class="sel-btn" data-op="gain-down">音量−</button>
+      <button class="sel-btn" data-op="fade-in">フェードイン</button>
+      <button class="sel-btn" data-op="fade-out">フェードアウト</button>
+      <button class="sel-btn" data-op="pitch">ピッチ補正</button>
+      <button class="sel-btn danger" data-op="delete">削除</button>
+      <button class="sel-btn ghost" data-op="clear">×</button>
+    </div>
+  `;
+  toolbar.classList.add('active');
+
+  toolbar.querySelectorAll('button[data-op]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await app.runClipSelectionOp(track, clip, btn.dataset.op);
+      updateClipSelection(app, track, clip);
+    });
+  });
 }
 
 function bindTrackEvents(app, track, el) {
   el.addEventListener('mousedown', e => {
     if (e.target.closest('input, button, select, textarea, .track-delete')) return;
+    if (e.target.closest('.track-clip')) return;
     app.selectTrack(track);
   });
 
   el.querySelector('.track-name').addEventListener('input', e => {
     track.name = e.target.value;
-    const clipName = el.querySelector('.clip-name');
-    if (clipName) clipName.textContent = track.name;
   });
 
   el.querySelector('.track-delete').addEventListener('click', () => {
@@ -152,9 +386,15 @@ function bindTrackEvents(app, track, el) {
     app.engine._reapplySolo();
   });
 
-  el.querySelector('.knob-mini.pitch').addEventListener('click', () => {
-    app.openPitchModal(track);
-  });
+  const pitchBtn = el.querySelector('.knob-mini.pitch');
+  if (pitchBtn) {
+    pitchBtn.addEventListener('click', () => {
+      if (track.clips.length === 0) return;
+      const target = app.selectedClip && track.clips.indexOf(app.selectedClip) >= 0
+        ? app.selectedClip : track.clips[0];
+      app.openPitchModalForClip(track, target);
+    });
+  }
 
   el.querySelectorAll('[data-p]').forEach(input => {
     const p = input.dataset.p;
@@ -168,16 +408,6 @@ function bindTrackEvents(app, track, el) {
       } else if (p === 'pan') {
         track.panNode.pan.value = v;
         disp.textContent = panLabel(v);
-      } else if (p === 'offset') {
-        disp.textContent = v.toFixed(3) + 's';
-        el.querySelector('.track-offset-display').textContent = offsetLabel(track);
-        app.refreshAll();
-      } else if (p === 'trimStart' || p === 'trimEnd') {
-        disp.textContent = v.toFixed(3) + 's';
-        el.querySelector('.track-offset-display').textContent = offsetLabel(track);
-        app.refreshAll();
-      } else if (p === 'fadeIn' || p === 'fadeOut') {
-        disp.textContent = v.toFixed(3) + 's';
       }
     });
   });
@@ -194,7 +424,6 @@ function bindTrackEvents(app, track, el) {
   });
 
   el.querySelectorAll('[data-d], [data-fxd]').forEach(disp => {
-    disp.classList.add('editable-value');
     disp.addEventListener('click', e => attachValueEditor(e.currentTarget, el));
   });
 
@@ -202,191 +431,6 @@ function bindTrackEvents(app, track, el) {
     track.fxOpen = !track.fxOpen;
     el.classList.toggle('fx-open', track.fxOpen);
   });
-  el.querySelector('.edit-toggle').addEventListener('click', () => {
-    track.editOpen = !track.editOpen;
-    el.classList.toggle('edit-open', track.editOpen);
-  });
-
-  bindWaveformInteraction(app, track, el);
-}
-
-function bindWaveformInteraction(app, track, el) {
-  const waveWrap = el.querySelector('.track-wave-wrap');
-  const clip = el.querySelector('.track-clip');
-  const clipHeader = el.querySelector('.clip-header');
-  const overlay = el.querySelector('.selection-overlay');
-  const toolbar = el.querySelector('.selection-toolbar');
-
-  bindClipDrag(app, track, clipHeader);
-
-  let downX = null;
-  let downTime = null;
-  let dragging = false;
-  const DRAG_THRESHOLD = 5;
-
-  const xToTime = clientX => {
-    const rect = clip.getBoundingClientRect();
-    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
-    return (x / rect.width) * track.buffer.duration;
-  };
-
-  clip.addEventListener('mousedown', e => {
-    if (e.button !== 0) return;
-    if (e.target.closest('.selection-toolbar')) return;
-    if (e.target.closest('.clip-header')) return;
-    downX = e.clientX;
-    downTime = xToTime(e.clientX);
-    dragging = false;
-    app.selectTrack(track);
-  });
-
-  window.addEventListener('mousemove', e => {
-    if (downX === null) return;
-    if (!dragging && Math.abs(e.clientX - downX) < DRAG_THRESHOLD) return;
-    dragging = true;
-    const currentTime = xToTime(e.clientX);
-    track.selectionStart = Math.min(downTime, currentTime);
-    track.selectionEnd = Math.max(downTime, currentTime);
-    updateSelectionUI(track, overlay, toolbar);
-  });
-
-  window.addEventListener('mouseup', e => {
-    if (downX === null) return;
-    if (!dragging) {
-      app.engine.seek(track.offset + downTime);
-    } else {
-      if (track.selectionEnd - track.selectionStart < 0.02) {
-        track.clearSelection();
-      }
-      updateSelectionUI(track, overlay, toolbar);
-    }
-    downX = null;
-    downTime = null;
-    dragging = false;
-  });
-
-  toolbar.addEventListener('click', async e => {
-    const btn = e.target.closest('button[data-op]');
-    if (!btn) return;
-    const op = btn.dataset.op;
-    await runSelectionOp(app, track, op);
-    updateSelectionUI(track, overlay, toolbar);
-  });
-}
-
-function bindClipDrag(app, track, clipHeader) {
-  if (!clipHeader) return;
-  clipHeader.addEventListener('mousedown', e => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-    app.selectTrack(track);
-
-    const wrap = track.el.querySelector('.track-wave-wrap');
-    const wrapRect = wrap.getBoundingClientRect();
-    const globalDur = app.getGlobalDuration();
-    const startX = e.clientX;
-    const startOffset = track.offset;
-
-    const onMove = me => {
-      const dx = me.clientX - startX;
-      const dt = (dx / wrapRect.width) * globalDur;
-      let newOffset = Math.max(0, startOffset + dt);
-      track.offset = newOffset;
-      app.layoutAllClips();
-      const slider = track.el.querySelector('[data-p="offset"]');
-      if (slider) slider.value = track.offset;
-      const disp = track.el.querySelector('[data-d="offset"]');
-      if (disp) disp.textContent = track.offset.toFixed(3) + 's';
-      const offsetDisp = track.el.querySelector('.track-offset-display');
-      if (offsetDisp) offsetDisp.textContent = offsetLabel(track);
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      app.refreshAll();
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  });
-}
-
-function updateSelectionUI(track, overlay, toolbar) {
-  if (!track.hasSelection()) {
-    overlay.style.display = 'none';
-    toolbar.classList.remove('active');
-    return;
-  }
-  const dur = track.buffer.duration;
-  const leftPct  = (track.selectionStart / dur) * 100;
-  const widthPct = ((track.selectionEnd - track.selectionStart) / dur) * 100;
-  overlay.style.display = 'block';
-  overlay.style.left = leftPct + '%';
-  overlay.style.width = widthPct + '%';
-
-  const selDur = track.selectionEnd - track.selectionStart;
-  toolbar.innerHTML = `
-    <span class="sel-info">
-      <span class="sel-info-label">範囲選択</span>
-      <span class="sel-info-time">${track.selectionStart.toFixed(2)}s → ${track.selectionEnd.toFixed(2)}s (${selDur.toFixed(2)}s)</span>
-    </span>
-    <div class="sel-actions">
-      <button class="sel-btn" data-op="silence" title="範囲を無音にする">無音化</button>
-      <button class="sel-btn" data-op="normalize" title="範囲のピーク音量を最大化">正規化</button>
-      <button class="sel-btn" data-op="gain-up" title="範囲の音量を上げる">音量+</button>
-      <button class="sel-btn" data-op="gain-down" title="範囲の音量を下げる">音量−</button>
-      <button class="sel-btn" data-op="fade-in" title="範囲全体にフェードインを適用">フェードイン</button>
-      <button class="sel-btn" data-op="fade-out" title="範囲全体にフェードアウトを適用">フェードアウト</button>
-      <button class="sel-btn" data-op="pitch" title="範囲だけにピッチ補正を適用">ピッチ補正</button>
-      <button class="sel-btn danger" data-op="delete" title="範囲を切り取って詰める">削除</button>
-      <button class="sel-btn ghost" data-op="clear" title="選択を解除">×</button>
-    </div>
-  `;
-  toolbar.classList.add('active');
-}
-
-async function runSelectionOp(app, track, op) {
-  if (!track.hasSelection() && op !== 'clear') return;
-  const s = track.selectionStart, e = track.selectionEnd;
-  switch (op) {
-    case 'silence':
-      track.silenceRange(s, e);
-      app.drawWave(track);
-      break;
-    case 'normalize':
-      track.normalizeRange(s, e);
-      app.drawWave(track);
-      break;
-    case 'gain-up':
-      track.applyGainToRange(s, e, Math.pow(10, 3/20));
-      app.drawWave(track);
-      break;
-    case 'gain-down':
-      track.applyGainToRange(s, e, Math.pow(10, -3/20));
-      app.drawWave(track);
-      break;
-    case 'fade-in':
-      track.applyFadeToRange(s, e, 'in');
-      app.drawWave(track);
-      break;
-    case 'fade-out':
-      track.applyFadeToRange(s, e, 'out');
-      app.drawWave(track);
-      break;
-    case 'delete':
-      if (!confirm(`選択範囲（${(e - s).toFixed(2)}秒）を削除しますか？\n削除後はその分だけ全体が短くなります。`)) return;
-      track.deleteRange(s, e);
-      app.drawWave(track);
-      app.refreshAll();
-      break;
-    case 'pitch':
-      await app.openPitchModalForRange(track, s, e);
-      app.drawWave(track);
-      break;
-    case 'clear':
-      track.clearSelection();
-      break;
-  }
 }
 
 function attachValueEditor(disp, rootEl) {
@@ -399,20 +443,14 @@ function attachValueEditor(disp, rootEl) {
   const step = parseFloat(slider.step);
   const decimals = step < 0.001 ? 4 : (step < 0.01 ? 3 : (step < 0.1 ? 2 : (step < 1 ? 1 : 0)));
   const currentValue = parseFloat(slider.value);
-
   const input = document.createElement('input');
   input.type = 'number';
   input.value = currentValue.toFixed(decimals);
-  input.min = min;
-  input.max = max;
-  input.step = step;
+  input.min = min; input.max = max; input.step = step;
   input.className = 'editable-value-input';
-
   disp.style.display = 'none';
   disp.parentNode.insertBefore(input, disp.nextSibling);
-  input.focus();
-  input.select();
-
+  input.focus(); input.select();
   let done = false;
   const commit = () => {
     if (done) return; done = true;
@@ -424,11 +462,7 @@ function attachValueEditor(disp, rootEl) {
     input.remove();
     disp.style.display = '';
   };
-  const cancel = () => {
-    if (done) return; done = true;
-    input.remove();
-    disp.style.display = '';
-  };
+  const cancel = () => { if (done) return; done = true; input.remove(); disp.style.display = ''; };
   input.addEventListener('blur', commit);
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); commit(); }
@@ -468,14 +502,6 @@ function formatFxDisplay(fx, v) {
 
 export function refreshTrackUIValues(track) {
   if (!track.el) return;
-  const setVal = (sel, v, disp) => {
-    const inp = track.el.querySelector(sel);
-    if (inp) inp.value = v;
-    if (disp !== undefined) {
-      const d = track.el.querySelector(sel.replace('[data-p=', '[data-d=').replace('[data-fx=', '[data-fxd='));
-      if (d) d.textContent = disp;
-    }
-  };
   const setSliderAndDisp = (key, value, displayStr) => {
     const inp = track.el.querySelector(`[data-p="${key}"]`);
     if (inp) inp.value = value;
@@ -488,15 +514,8 @@ export function refreshTrackUIValues(track) {
     const d = track.el.querySelector(`[data-fxd="${key}"]`);
     if (d) d.textContent = displayStr;
   };
-
   setSliderAndDisp('gain', track.gain, gainToDb(track.gain));
   setSliderAndDisp('pan', track.pan, panLabel(track.pan));
-  setSliderAndDisp('offset', track.offset, track.offset.toFixed(3) + 's');
-  setSliderAndDisp('trimStart', track.trimStart, track.trimStart.toFixed(3) + 's');
-  setSliderAndDisp('trimEnd', track.trimEnd, track.trimEnd.toFixed(3) + 's');
-  setSliderAndDisp('fadeIn', track.fadeIn, track.fadeIn.toFixed(3) + 's');
-  setSliderAndDisp('fadeOut', track.fadeOut, track.fadeOut.toFixed(3) + 's');
-
   setFxSliderAndDisp('hpfFreq', track.hpfFreq, `${Math.round(track.hpfFreq)} Hz`);
   setFxSliderAndDisp('eqLow', track.eqLow, `${track.eqLow.toFixed(1)} dB`);
   setFxSliderAndDisp('eqMid', track.eqMid, `${track.eqMid.toFixed(1)} dB`);
@@ -506,20 +525,10 @@ export function refreshTrackUIValues(track) {
   setFxSliderAndDisp('compAttack', track.compAttack, `${(track.compAttack*1000).toFixed(1)}ms`);
   setFxSliderAndDisp('compRelease', track.compRelease, `${(track.compRelease*1000).toFixed(0)}ms`);
   setFxSliderAndDisp('reverbMix', track.reverbMix, `${Math.round(track.reverbMix*100)}%`);
-
   const nameInp = track.el.querySelector('.track-name');
   if (nameInp) nameInp.value = track.name;
-
   const muteBtn = track.el.querySelector('.knob-mini.mute');
   if (muteBtn) muteBtn.classList.toggle('active', track.muted);
   const soloBtn = track.el.querySelector('.knob-mini.solo');
   if (soloBtn) soloBtn.classList.toggle('active', track.soloed);
-  const pitchBtn = track.el.querySelector('.knob-mini.pitch');
-  if (pitchBtn) pitchBtn.classList.toggle('active', track.pitchCorrected);
-
-  const offsetDisp = track.el.querySelector('.track-offset-display');
-  if (offsetDisp) {
-    const eff = track.buffer.duration - track.trimStart - track.trimEnd;
-    offsetDisp.textContent = `${formatTime(track.offset)} · ${formatTime(Math.max(0, eff))}`;
-  }
 }
