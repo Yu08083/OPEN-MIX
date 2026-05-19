@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OPEN MIX</title>
+<link rel="icon" type="image/png" href="./assets/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&family=Noto+Serif+JP:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="./css/tokens.css">
+<link rel="stylesheet" href="./css/base.css">
+<link rel="stylesheet" href="./css/header.css">
+<link rel="stylesheet" href="./css/timeline.css">
+<link rel="stylesheet" href="./css/tracks.css">
+<link rel="stylesheet" href="./css/fx-rack.css">
+<link rel="stylesheet" href="./css/plugins.css">
+<link rel="stylesheet" href="./css/overlay.css">
+<link rel="stylesheet" href="./css/modal.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="header">
+    <div class="brand-block">
+      <img class="brand-mark" src="./assets/logo.png" alt="OPEN MIX">
+      <span class="brand-meta">vocal mix editor / v0.3</span>
+    </div>
+    <div class="transport">
+      <div class="transport-buttons">
+        <button class="t-btn" id="btn-play" disabled>Play</button>
+        <button class="t-btn" id="btn-pause" disabled>Pause</button>
+        <button class="t-btn" id="btn-stop" disabled>Stop</button>
+      </div>
+      <div class="time-display">
+        <span id="time-current">0:00.00</span>
+        <span class="duration">/ <span id="time-duration">0:00.00</span></span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="project-actions">
+        <button class="t-btn" id="btn-save-project" disabled>Save</button>
+        <button class="t-btn" id="btn-load-project">Load</button>
+        <input type="file" id="load-project-input" accept=".json,application/json" style="display:none">
+      </div>
+      <div class="master-strip">
+        <span class="master-strip-label">MASTER</span>
+        <input type="range" class="master-gain-slider" id="master-gain" min="0" max="2" step="0.01" value="1">
+        <div class="master-strip-meter"><div class="master-strip-meter-fill" id="master-meter-fill"></div></div>
+        <span class="master-strip-value" id="master-gain-val">0.0 dB</span>
+      </div>
+      <button class="t-btn primary" id="btn-export" disabled>Export WAV</button>
+    </div>
+  </header>
+
+  <div class="timeline" id="timeline">
+    <div class="timeline-playhead" id="playhead" style="left:0px"></div>
+  </div>
+
+  <div class="tracks empty" id="tracks">
+    <div class="tracks-empty">
+      <div class="tracks-empty-msg">音源ファイルをここにドロップ</div>
+      <div class="tracks-empty-sub">WAV · MP3 · M4A · OGG · 複数同時可</div>
+    </div>
+  </div>
+
+  <div class="add-track" id="add-track">
+    <button class="add-track-btn" id="add-track-btn">+ Add Track</button>
+    <span class="add-track-hint">or drop audio files</span>
+    <input type="file" id="add-track-input" accept="audio/*" multiple style="display:none">
+  </div>
+
+  <footer class="footer">
+    <div>OPEN MIX · MIT</div>
+    <div>v0.3 · Fade · Trim · Project · Pitch</div>
+  </footer>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="overlay-box">
+    <div id="overlay-msg">処理中…</div>
+    <div class="overlay-progress"><div class="overlay-progress-fill" id="overlay-fill"></div></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="pitch-modal-backdrop">
+  <div class="modal" id="pitch-modal"></div>
+</div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>

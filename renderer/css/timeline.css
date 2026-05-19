@@ -1,0 +1,32 @@
+.timeline {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  height: 28px;
+  position: relative;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-faint);
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.timeline-tick {
+  position: absolute;
+  top: 0; bottom: 0;
+  border-left: 1px solid var(--line);
+  padding: 4px 0 0 4px;
+  pointer-events: none;
+}
+.timeline-tick.major {
+  border-left-color: var(--ink-soft);
+  color: var(--ink-soft);
+}
+.timeline-playhead {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 1px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 5;
+}

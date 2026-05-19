@@ -1,0 +1,18 @@
+:root {
+  --bg: #F2EFE7;
+  --paper: #FAF8F2;
+  --paper-deep: #F5F1E6;
+  --ink: #1A1A1A;
+  --ink-soft: #4A4A47;
+  --ink-faint: #9D9A92;
+  --line: #D8D3C5;
+  --line-soft: #E8E4D8;
+  --accent: #0550C2;
+  --accent-soft: #C9D8F0;
+  --warn: #B8841F;
+  --green: #5A7A4F;
+
+  --font-serif: 'EB Garamond', 'Noto Serif JP', serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --font-sans: 'Noto Sans JP', system-ui, sans-serif;
+}
