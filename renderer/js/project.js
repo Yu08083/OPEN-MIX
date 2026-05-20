@@ -6,6 +6,7 @@ export function serializeProject(engine) {
     app: 'OPEN MIX',
     savedAt: new Date().toISOString(),
     masterGain: engine.masterGain ? engine.masterGain.gain.value : 1,
+    masterSettings: { ...engine.masterSettings },
     bpm: engine.bpm,
     beatsPerBar: engine.beatsPerBar,
     snapEnabled: engine.snapEnabled,
@@ -37,6 +38,7 @@ export function applyProject(engine, masterSlider, masterDisplay, project, buffe
   if (typeof project.beatsPerBar === 'number') engine.beatsPerBar = project.beatsPerBar;
   if (typeof project.snapEnabled === 'boolean') engine.snapEnabled = project.snapEnabled;
   if (typeof project.snapResolution === 'number') engine.snapResolution = project.snapResolution;
+  if (project.masterSettings) engine.applyMasterSettings(project.masterSettings);
 
   const tracksByName = new Map();
   engine.tracks.forEach(t => tracksByName.set(t.name, t));

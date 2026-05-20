@@ -7,6 +7,8 @@ import { formatTime, gainToDb } from './utils.js';
 import { serializeProject, projectToBlob, defaultProjectFilename, loadProjectFromFile, applyProject } from './project.js';
 import { PitchModal } from './pitch-view.js';
 import { MidiEditor } from './midi-view.js';
+import { MasterModal } from './master-view.js';
+import { HarmonyModal } from './harmony-view.js';
 
 const isElectron = !!window.electron;
 
@@ -18,6 +20,8 @@ export class App {
     this.playhead = document.getElementById('playhead');
     this.pitchModal = new PitchModal(this);
     this.midiEditor = new MidiEditor(this);
+    this.masterModal = new MasterModal(this);
+    this.harmonyModal = new HarmonyModal(this);
     this.selectedTrack = null;
     this.selectedClip = null;
     this.clipboard = null;
@@ -249,6 +253,7 @@ export class App {
     document.getElementById('btn-save-project').addEventListener('click', () => this._saveProject());
     document.getElementById('btn-load-project').addEventListener('click', () => this._loadProjectFlow());
     document.getElementById('btn-add-midi-track').addEventListener('click', () => this._addMidiTrack());
+    document.getElementById('btn-master-settings').addEventListener('click', () => this.masterModal.open());
 
     document.getElementById('load-project-input').addEventListener('change', e => {
       const f = e.target.files[0];
@@ -362,7 +367,7 @@ export class App {
     if (mod && e.code === 'KeyO') { e.preventDefault(); this._loadProjectFlow(); return; }
     if (mod && e.code === 'KeyE') { e.preventDefault(); this._export(); return; }
     if (mod && e.code === 'KeyC' && this.selectedClip) { e.preventDefault(); this.clipboard = this.selectedClip; return; }
-    if (mod && e.code === 'KeyV' && this.clipboard && this.selectedTrack) {
+    if (mod && e.code === 'KeyV' && this.clipboard) {
       e.preventDefault();
       this._pasteClipAtPlayhead();
       return;
@@ -506,11 +511,20 @@ export class App {
   }
 
   _pasteClipAtPlayhead() {
-    if (!this.clipboard || !this.selectedTrack) return;
+    if (!this.clipboard) return;
     const src = this.clipboard;
-    if (src.type !== this.selectedTrack.type) {
-      alert('クリップの種類とトラックの種類が一致しません。');
-      return;
+    let targetTrack = this.selectedTrack;
+    if (!targetTrack || targetTrack.type !== src.type) {
+      targetTrack = this.engine.tracks.find(t => t.type === src.type);
+    }
+    if (!targetTrack) {
+      if (src.type === 'audio') {
+        alert('オーディオトラックがありません。先にトラックを追加してください。');
+        return;
+      } else {
+        this._addMidiTrack();
+        targetTrack = this.engine.tracks[this.engine.tracks.length - 1];
+      }
     }
     let newClip;
     if (src.type === 'audio') {
@@ -524,10 +538,21 @@ export class App {
       newClip.notes = src.notes.map(n => ({ ...n }));
     }
     newClip.gain = src.gain;
-    newClip.offset = this.engine.snapTime(this.engine.currentPos());
-    this.selectedTrack.addClip(newClip);
-    renderClips(this, this.selectedTrack);
+
+    let dest = this.engine.snapTime(this.engine.currentPos());
+    const overlapping = targetTrack.clips.find(c =>
+      Math.abs(c.offset - dest) < 0.001
+    );
+    if (overlapping) {
+      dest = this.engine.snapTime(overlapping.endTime());
+    }
+    newClip.offset = dest;
+    targetTrack.addClip(newClip);
+    renderClips(this, targetTrack);
+    this.selectTrack(targetTrack);
+    this.selectClip(targetTrack, newClip);
     this.refreshAll();
+    this.engine.seek(newClip.offset + newClip.duration);
   }
 
   async deleteTrack(track) {
@@ -587,6 +612,10 @@ export class App {
 
   openMidiEditor(track, clip) {
     this.midiEditor.open(track, clip);
+  }
+
+  openHarmonyForClip(track, clip) {
+    this.harmonyModal.open(track, clip);
   }
 
   async _saveProject() {

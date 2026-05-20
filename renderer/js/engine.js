@@ -4,6 +4,13 @@ import { audioBufferToWav } from './wav.js';
 export class Engine {
   constructor() {
     this.ctx = null;
+    this.masterIn = null;
+    this.masterEqLow = null;
+    this.masterEqMid = null;
+    this.masterEqHigh = null;
+    this.masterComp = null;
+    this.masterLimiter = null;
+    this.masterLimiterBypass = null;
     this.masterGain = null;
     this.masterAnalyser = null;
     this.reverbIR = null;
@@ -21,6 +28,12 @@ export class Engine {
     this.snapEnabled = true;
     this.snapResolution = 4;
 
+    this.masterSettings = {
+      eqLow: 0, eqMid: 0, eqHigh: 0,
+      compThreshold: -18, compRatio: 2, compAttack: 0.01, compRelease: 0.2,
+      limiterThreshold: -1, limiterEnabled: true,
+    };
+
     this.onTimeUpdate = () => {};
     this.onPlayState = () => {};
   }
@@ -28,13 +41,90 @@ export class Engine {
   ensure() {
     if (this.ctx) return;
     this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    this.masterIn = this.ctx.createGain();
+
+    this.masterEqLow = this.ctx.createBiquadFilter();
+    this.masterEqLow.type = 'lowshelf';
+    this.masterEqLow.frequency.value = 200;
+    this.masterEqLow.gain.value = this.masterSettings.eqLow;
+
+    this.masterEqMid = this.ctx.createBiquadFilter();
+    this.masterEqMid.type = 'peaking';
+    this.masterEqMid.frequency.value = 1500;
+    this.masterEqMid.Q.value = 1;
+    this.masterEqMid.gain.value = this.masterSettings.eqMid;
+
+    this.masterEqHigh = this.ctx.createBiquadFilter();
+    this.masterEqHigh.type = 'highshelf';
+    this.masterEqHigh.frequency.value = 5000;
+    this.masterEqHigh.gain.value = this.masterSettings.eqHigh;
+
+    this.masterComp = this.ctx.createDynamicsCompressor();
+    this.masterComp.threshold.value = this.masterSettings.compThreshold;
+    this.masterComp.ratio.value = this.masterSettings.compRatio;
+    this.masterComp.attack.value = this.masterSettings.compAttack;
+    this.masterComp.release.value = this.masterSettings.compRelease;
+    this.masterComp.knee.value = 6;
+
+    this.masterLimiter = this.ctx.createDynamicsCompressor();
+    this.masterLimiter.threshold.value = this.masterSettings.limiterThreshold;
+    this.masterLimiter.ratio.value = 20;
+    this.masterLimiter.attack.value = 0.001;
+    this.masterLimiter.release.value = 0.05;
+    this.masterLimiter.knee.value = 0;
+
+    this.masterLimiterBypass = this.ctx.createGain();
+
     this.masterGain = this.ctx.createGain();
     this.masterGain.gain.value = 1.0;
+
     this.masterAnalyser = this.ctx.createAnalyser();
     this.masterAnalyser.fftSize = 1024;
+
+    this.masterIn
+      .connect(this.masterEqLow)
+      .connect(this.masterEqMid)
+      .connect(this.masterEqHigh)
+      .connect(this.masterComp);
+    this._wireMasterLimiter();
     this.masterGain.connect(this.masterAnalyser);
     this.masterAnalyser.connect(this.ctx.destination);
+
     this.reverbIR = this._makeIR(this.ctx, 2.0, 2.5);
+  }
+
+  _wireMasterLimiter() {
+    try { this.masterComp.disconnect(); } catch (e) {}
+    try { this.masterLimiter.disconnect(); } catch (e) {}
+    try { this.masterLimiterBypass.disconnect(); } catch (e) {}
+    if (this.masterSettings.limiterEnabled) {
+      this.masterComp.connect(this.masterLimiter).connect(this.masterGain);
+    } else {
+      this.masterComp.connect(this.masterLimiterBypass).connect(this.masterGain);
+    }
+  }
+
+  applyMasterSettings(s) {
+    Object.assign(this.masterSettings, s);
+    if (!this.ctx) return;
+    this.masterEqLow.gain.value = this.masterSettings.eqLow;
+    this.masterEqMid.gain.value = this.masterSettings.eqMid;
+    this.masterEqHigh.gain.value = this.masterSettings.eqHigh;
+    this.masterComp.threshold.value = this.masterSettings.compThreshold;
+    this.masterComp.ratio.value = this.masterSettings.compRatio;
+    this.masterComp.attack.value = this.masterSettings.compAttack;
+    this.masterComp.release.value = this.masterSettings.compRelease;
+    this.masterLimiter.threshold.value = this.masterSettings.limiterThreshold;
+    this._wireMasterLimiter();
+  }
+
+  resetMasterSettings() {
+    this.applyMasterSettings({
+      eqLow: 0, eqMid: 0, eqHigh: 0,
+      compThreshold: -18, compRatio: 2, compAttack: 0.01, compRelease: 0.2,
+      limiterThreshold: -1, limiterEnabled: true,
+    });
   }
 
   _makeIR(ctx, duration, decay) {
@@ -55,7 +145,7 @@ export class Engine {
 
   addTrack(track) {
     this.tracks.push(track);
-    track.buildGraph(this.ctx, this.masterGain, this.reverbIR);
+    track.buildGraph(this.ctx, this.masterIn, this.reverbIR);
     this._reapplySolo();
   }
 
@@ -78,9 +168,7 @@ export class Engine {
 
   totalDuration() {
     let max = 0;
-    this.tracks.forEach(t => {
-      max = Math.max(max, t.effectiveDuration());
-    });
+    this.tracks.forEach(t => { max = Math.max(max, t.effectiveDuration()); });
     return max;
   }
 
@@ -143,10 +231,7 @@ export class Engine {
   _tick() {
     this.onTimeUpdate(this.currentPos());
     if (this.isPlaying) {
-      if (this.currentPos() >= this.totalDuration()) {
-        this.stop();
-        return;
-      }
+      if (this.currentPos() >= this.totalDuration()) { this.stop(); return; }
       this.rafId = requestAnimationFrame(() => this._tick());
     }
   }
@@ -174,8 +259,29 @@ export class Engine {
 
     const sr = this.ctx.sampleRate;
     const off = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
+
+    const masterIn = off.createGain();
+    const eqLow = off.createBiquadFilter(); eqLow.type = 'lowshelf'; eqLow.frequency.value = 200; eqLow.gain.value = this.masterSettings.eqLow;
+    const eqMid = off.createBiquadFilter(); eqMid.type = 'peaking'; eqMid.frequency.value = 1500; eqMid.Q.value = 1; eqMid.gain.value = this.masterSettings.eqMid;
+    const eqHigh = off.createBiquadFilter(); eqHigh.type = 'highshelf'; eqHigh.frequency.value = 5000; eqHigh.gain.value = this.masterSettings.eqHigh;
+    const comp = off.createDynamicsCompressor();
+    comp.threshold.value = this.masterSettings.compThreshold;
+    comp.ratio.value = this.masterSettings.compRatio;
+    comp.attack.value = this.masterSettings.compAttack;
+    comp.release.value = this.masterSettings.compRelease;
+    comp.knee.value = 6;
+    const limiter = off.createDynamicsCompressor();
+    limiter.threshold.value = this.masterSettings.limiterThreshold;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.001;
+    limiter.release.value = 0.05;
+    limiter.knee.value = 0;
     const masterG = off.createGain();
-    masterG.gain.value = this.masterGain.gain.value;
+    masterG.gain.value = this.masterGain ? this.masterGain.gain.value : 1;
+
+    masterIn.connect(eqLow).connect(eqMid).connect(eqHigh).connect(comp);
+    if (this.masterSettings.limiterEnabled) comp.connect(limiter).connect(masterG);
+    else comp.connect(masterG);
     masterG.connect(off.destination);
 
     const ir = this._makeIR(off, 2.0, 2.5);
@@ -183,7 +289,7 @@ export class Engine {
 
     for (const t of this.tracks) {
       if (t.clips.length === 0) continue;
-      t.cloneGraphForOffline(off, masterG, ir, anySolo);
+      t.cloneGraphForOffline(off, masterIn, ir, anySolo);
     }
 
     progressCb && progressCb(0.3);

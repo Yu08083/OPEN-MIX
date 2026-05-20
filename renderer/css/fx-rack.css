@@ -65,3 +65,41 @@
 @media (max-width: 900px) {
   .track.fx-open .fx-rack { grid-template-columns: 1fr 1fr; }
 }
+
+.fx-ir-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line-soft);
+}
+.fx-ir-name {
+  flex: 1;
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  color: var(--ink-mid);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fx-ir-btn {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  padding: 3px 8px;
+  cursor: pointer;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.fx-ir-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.fx-ir-btn:disabled {
+  color: var(--ink-faint);
+  cursor: not-allowed;
+}

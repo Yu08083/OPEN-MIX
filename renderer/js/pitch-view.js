@@ -1,8 +1,10 @@
 import {
   analyzePitchCurve, correctPitch, correctPitchWithNotes, correctPitchRange,
+  correctPitchWithCachedCurve,
   segmentPitchCurve, snapMidiToScale,
   getScaleOptions, getKeyOptions,
   freqToMidi, midiToFreq, midiToNoteName,
+  setScratchCtx,
 } from './pitch.js';
 import { escapeHtml } from './utils.js';
 
@@ -28,31 +30,62 @@ export class PitchModal {
     this.minMidi = 48;
     this.maxMidi = 84;
     this.totalTime = 1;
+    this.originalBuffer = null;
+    this.applied = false;
+    this.rendering = false;
+    this.rerunRender = false;
+    this.renderTimer = null;
+    this.livePreview = true;
     this.backdrop.addEventListener('click', e => { if (e.target === this.backdrop) this.close(); });
   }
 
   async openForClip(track, clip) {
     if (!clip || clip.type !== 'audio') return;
+    this.app.engine.ensure();
+    setScratchCtx(this.app.engine.ctx);
     this.track = track; this.clip = clip;
     this.curve = null; this.notes = []; this.selectedNoteIdx = -1;
     this.rangeMode = false;
+    this.applied = false;
+    this.originalBuffer = this._cloneBuffer(clip.buffer);
     this.render();
     this.backdrop.classList.add('active');
     await this.analyze();
   }
   async openForClipRange(track, clip, start, end) {
     if (!clip || clip.type !== 'audio') return;
+    this.app.engine.ensure();
+    setScratchCtx(this.app.engine.ctx);
     this.track = track; this.clip = clip;
     this.curve = null; this.notes = []; this.selectedNoteIdx = -1;
     this.rangeMode = true;
     this.rangeStart = start; this.rangeEnd = end;
+    this.applied = false;
+    this.originalBuffer = this._cloneBuffer(clip.buffer);
     this.render();
     this.backdrop.classList.add('active');
     await this.analyze();
   }
   close() {
+    if (!this.applied && this.originalBuffer && this.clip) {
+      this.clip.buffer = this.originalBuffer;
+      this.clip.peaks = null;
+      this.app.drawClip(this.clip);
+    }
+    if (this.renderTimer) { clearTimeout(this.renderTimer); this.renderTimer = null; }
     this.backdrop.classList.remove('active');
     this.track = null; this.clip = null;
+    this.originalBuffer = null;
+  }
+
+  _cloneBuffer(buf) {
+    const ctx = this.app.engine.ctx;
+    if (!ctx) throw new Error('Audio context not initialized');
+    const copy = ctx.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      copy.copyToChannel(buf.getChannelData(c), c);
+    }
+    return copy;
   }
 
   render() {
@@ -67,10 +100,20 @@ export class PitchModal {
         </div>
         <button class="modal-close" id="pitch-close">×</button>
       </div>
+      <div class="pitch-transport">
+        <button class="t-btn" id="pitch-play">▶ 再生</button>
+        <button class="t-btn" id="pitch-pause">⏸ 一時停止</button>
+        <button class="t-btn" id="pitch-stop">■ 停止</button>
+        <label class="pitch-live-toggle">
+          <input type="checkbox" id="pitch-live-checkbox" ${this.livePreview ? 'checked' : ''}>
+          <span>編集と同時にプレビュー</span>
+        </label>
+        <span class="pitch-render-status" id="pitch-render-status"></span>
+      </div>
       <div class="modal-section">
         <div class="modal-section-label">音程エディタ</div>
         <div class="pitch-canvas-wrap"><canvas class="pitch-canvas" id="pitch-canvas"></canvas></div>
-        <div class="pitch-help">青いノートを<strong>上下にドラッグ</strong>して音程変更。Shift+ドラッグでセント微調整。</div>
+        <div class="pitch-help">青いノートを<strong>上下にドラッグ</strong>して音程変更。Shift+ドラッグでセント微調整。離した瞬間にプレビュー更新されるので、再生したまま編集できる。</div>
         <div id="pitch-note-info-area"></div>
       </div>
       <div class="modal-section">
@@ -92,29 +135,41 @@ export class PitchModal {
       <div class="modal-footer">
         <button class="t-btn" id="pitch-snap-all">全ノートをスケールに再スナップ</button>
         <button class="t-btn" id="pitch-reanalyze">再解析</button>
-        <button class="t-btn" id="pitch-cancel">キャンセル</button>
-        <button class="t-btn primary" id="pitch-apply">適用</button>
+        <button class="t-btn" id="pitch-revert">破棄して閉じる</button>
+        <button class="t-btn primary" id="pitch-apply">適用して閉じる</button>
       </div>
     `;
     this.canvas = document.getElementById('pitch-canvas');
     this.noteInfoArea = document.getElementById('pitch-note-info-area');
     document.getElementById('pitch-close').addEventListener('click', () => this.close());
-    document.getElementById('pitch-cancel').addEventListener('click', () => this.close());
+    document.getElementById('pitch-revert').addEventListener('click', () => this.close());
+    document.getElementById('pitch-play').addEventListener('click', () => this.app.engine.play());
+    document.getElementById('pitch-pause').addEventListener('click', () => this.app.engine.pause());
+    document.getElementById('pitch-stop').addEventListener('click', () => this.app.engine.stop());
+    document.getElementById('pitch-live-checkbox').addEventListener('change', e => {
+      this.livePreview = e.target.checked;
+    });
     document.getElementById('pitch-scale').addEventListener('change', e => {
       this.scale = e.target.value; this.resnap(); this.drawCanvas(); this.renderNoteInfo();
+      this.schedulePreviewRender();
     });
     document.getElementById('pitch-key').addEventListener('change', e => {
       this.key = parseInt(e.target.value); this.resnap(); this.drawCanvas(); this.renderNoteInfo();
+      this.schedulePreviewRender();
     });
     document.getElementById('pitch-strength').addEventListener('input', e => {
       this.strength = parseFloat(e.target.value);
       document.getElementById('pitch-strength-val').textContent = Math.round(this.strength * 100) + '%';
     });
+    document.getElementById('pitch-strength').addEventListener('change', () => {
+      this.schedulePreviewRender();
+    });
     document.getElementById('pitch-reanalyze').addEventListener('click', () => this.analyze());
-    document.getElementById('pitch-apply').addEventListener('click', () => this.apply());
+    document.getElementById('pitch-apply').addEventListener('click', () => this.applyAndClose());
     document.getElementById('pitch-snap-all').addEventListener('click', () => {
       this.notes.forEach(n => { n.targetMidi = snapMidiToScale(n.detectedMidi, this.key, this.scale); n.manuallyEdited = false; });
       this.drawCanvas(); this.renderNoteInfo();
+      this.schedulePreviewRender();
     });
     this.canvas.addEventListener('mousedown', e => this.onMouseDown(e));
     window.addEventListener('mousemove', e => this.onMouseMove(e));
@@ -150,14 +205,15 @@ export class PitchModal {
     const startS = Math.max(0, Math.floor(absStart * sr));
     const endS = Math.min(c.buffer.length, Math.floor(absEnd * sr));
     const len = endS - startS;
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (len <= 0) throw new Error('解析対象が空です（クリップが短すぎる可能性）');
+    const ctx = this.app.engine.ctx;
+    if (!ctx) throw new Error('オーディオコンテキスト未初期化');
     const sub = ctx.createBuffer(c.buffer.numberOfChannels, len, sr);
     for (let ch = 0; ch < c.buffer.numberOfChannels; ch++) {
       const src = c.buffer.getChannelData(ch);
       const dst = sub.getChannelData(ch);
       for (let i = 0; i < len; i++) dst[i] = src[startS + i];
     }
-    ctx.close();
     return sub;
   }
 
@@ -293,71 +349,123 @@ export class PitchModal {
     note.manuallyEdited = true;
     this.drawCanvas(); this.renderNoteInfo();
   }
-  onMouseUp() { this.dragging = false; }
-
-  async apply() {
-    if (!this.clip || !this.clip.buffer) return;
-    if (this.notes.length === 0) { alert('対象ノートがありません。'); return; }
-    if (!confirm(`「${this.clip.name}」のクリップ${this.rangeMode ? '範囲' : '全体'}にピッチ補正を適用します。続けますか？`)) return;
-
-    this.app._showOverlay('ピッチ補正適用中…');
-    try {
-      const c = this.clip;
-      const sr = c.buffer.sampleRate;
-      const startSec = this.rangeMode ? this.rangeStart : 0;
-      const endSec = this.rangeMode ? this.rangeEnd : c.duration;
-      const absStart = c.trimStart + startSec;
-      const absEnd = c.trimStart + endSec;
-      const startS = Math.floor(absStart * sr);
-      const endS = Math.floor(absEnd * sr);
-      const rangeLen = endS - startS;
-      const padS = Math.min(4096, startS, c.buffer.length - endS);
-      const subLen = rangeLen + padS * 2;
-      const subStart = startS - padS;
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const sub = ctx.createBuffer(c.buffer.numberOfChannels, subLen, sr);
-      for (let ch = 0; ch < c.buffer.numberOfChannels; ch++) {
-        const src = c.buffer.getChannelData(ch);
-        const dst = sub.getChannelData(ch);
-        for (let i = 0; i < subLen; i++) dst[i] = src[subStart + i];
-      }
-      const offsetTime = subStart / sr;
-      const shiftedNotes = this.notes.map(n => ({
-        startTime: n.startTime - offsetTime + absStart,
-        endTime: n.endTime - offsetTime + absStart,
-        targetMidi: n.targetMidi,
-        detectedMidi: n.detectedMidi,
-      }));
-      const reshiftedNotes = this.notes.map(n => ({
-        startTime: n.startTime + padS / sr,
-        endTime: n.endTime + padS / sr,
-        targetMidi: n.targetMidi,
-        detectedMidi: n.detectedMidi,
-      }));
-      const corrected = await correctPitchWithNotes(sub, reshiftedNotes, { strength: this.strength }, p => {
-        document.getElementById('overlay-fill').style.width = (p * 100) + '%';
-      });
-      const fadeLen = Math.min(512, Math.floor(rangeLen / 8), padS);
-      for (let ch = 0; ch < c.buffer.numberOfChannels; ch++) {
-        const src = corrected.getChannelData(ch);
-        const dst = c.buffer.getChannelData(ch);
-        for (let i = 0; i < rangeLen; i++) {
-          const tIdx = startS + i;
-          const sIdx = padS + i;
-          let mix = 1;
-          if (fadeLen > 0) {
-            if (i < fadeLen) mix = i / fadeLen;
-            else if (i >= rangeLen - fadeLen) mix = (rangeLen - i) / fadeLen;
-          }
-          dst[tIdx] = src[sIdx] * mix + dst[tIdx] * (1 - mix);
-        }
-      }
-      ctx.close();
-      c.peaks = null;
-      c.pitchCorrected = true;
-      this.app.drawClip(c);
-      this.close();
-    } catch (err) { alert('適用失敗: ' + err.message); }
-    this.app._hideOverlay();
+  onMouseUp() {
+    if (this.dragging) {
+      this.dragging = false;
+      this.schedulePreviewRender();
+    }
   }
+
+  schedulePreviewRender() {
+    if (!this.livePreview) return;
+    if (!this.curve || this.notes.length === 0) return;
+    if (this.renderTimer) clearTimeout(this.renderTimer);
+    this.renderTimer = setTimeout(() => {
+      this.renderTimer = null;
+      this.renderPreview();
+    }, 150);
+  }
+
+  async renderPreview() {
+    if (!this.clip || !this.originalBuffer || !this.curve) return;
+    if (this.rendering) { this.rerunRender = true; return; }
+    this.rendering = true;
+    this._setRenderStatus('プレビュー更新中…');
+    try {
+      const src = this._cloneBuffer(this.originalBuffer);
+      if (this.rangeMode) {
+        await this._renderRangePreview(src);
+      } else {
+        const result = await correctPitchWithCachedCurve(src, this.curve, this.notes, { strength: this.strength });
+        this.clip.buffer = result;
+      }
+      this.clip.peaks = null;
+      if (this.clip.el) this.app.drawClip(this.clip);
+    } catch (err) {
+      console.error('preview failed', err);
+      this._setRenderStatus('プレビュー失敗');
+      setTimeout(() => this._setRenderStatus(''), 2000);
+    }
+    this.rendering = false;
+    if (this.rerunRender) {
+      this.rerunRender = false;
+      this._setRenderStatus('');
+      this.renderPreview();
+    } else {
+      this._setRenderStatus('✓ プレビュー反映');
+      setTimeout(() => { if (!this.rendering) this._setRenderStatus(''); }, 1500);
+    }
+  }
+
+  async _renderRangePreview(srcBuffer) {
+    const c = this.clip;
+    const sr = srcBuffer.sampleRate;
+    const startSec = this.rangeStart;
+    const endSec = this.rangeEnd;
+    const absStart = c.trimStart + startSec;
+    const absEnd = c.trimStart + endSec;
+    const startS = Math.max(0, Math.floor(absStart * sr));
+    const endS = Math.min(srcBuffer.length, Math.floor(absEnd * sr));
+    const rangeLen = endS - startS;
+    if (rangeLen < 2048) { this.clip.buffer = srcBuffer; return; }
+    const padS = Math.min(4096, startS, srcBuffer.length - endS);
+    const subLen = rangeLen + padS * 2;
+    const subStart = startS - padS;
+    const ctx = this.app.engine.ctx;
+    const sub = ctx.createBuffer(srcBuffer.numberOfChannels, subLen, sr);
+    for (let ch = 0; ch < srcBuffer.numberOfChannels; ch++) {
+      const s = srcBuffer.getChannelData(ch);
+      const d = sub.getChannelData(ch);
+      for (let i = 0; i < subLen; i++) d[i] = s[subStart + i];
+    }
+    const subCurve = this.curve.map(p => ({ time: p.time + padS / sr, freq: p.freq }));
+    const subNotes = this.notes.map(n => ({
+      startTime: n.startTime + padS / sr,
+      endTime: n.endTime + padS / sr,
+      targetMidi: n.targetMidi,
+      detectedMidi: n.detectedMidi,
+    }));
+    const corrected = await correctPitchWithCachedCurve(sub, subCurve, subNotes, { strength: this.strength });
+    const fadeLen = Math.min(512, Math.floor(rangeLen / 8), padS);
+    for (let ch = 0; ch < srcBuffer.numberOfChannels; ch++) {
+      const cs = corrected.getChannelData(ch);
+      const ds = srcBuffer.getChannelData(ch);
+      for (let i = 0; i < rangeLen; i++) {
+        const ti = startS + i;
+        const si = padS + i;
+        let mix = 1;
+        if (fadeLen > 0) {
+          if (i < fadeLen) mix = i / fadeLen;
+          else if (i >= rangeLen - fadeLen) mix = (rangeLen - i) / fadeLen;
+        }
+        ds[ti] = cs[si] * mix + ds[ti] * (1 - mix);
+      }
+    }
+    this.clip.buffer = srcBuffer;
+  }
+
+  _setRenderStatus(msg) {
+    const el = document.getElementById('pitch-render-status');
+    if (el) el.textContent = msg;
+  }
+
+  async applyAndClose() {
+    if (!this.clip || !this.originalBuffer) { this.close(); return; }
+    if (this.rendering) {
+      this._setRenderStatus('レンダー完了待ち…');
+      while (this.rendering) await new Promise(r => setTimeout(r, 100));
+    }
+    if (this.notes.length > 0 && this.curve) {
+      const stillOriginal = this.clip.buffer === this.originalBuffer;
+      if (stillOriginal) {
+        this.app._showOverlay('ピッチ補正適用中…');
+        try { await this.renderPreview(); } catch (e) {}
+        this.app._hideOverlay();
+      }
+    }
+    this.applied = true;
+    this.clip.pitchCorrected = true;
+    this.close();
+  }
+
 }

@@ -135,3 +135,20 @@
   .transport { justify-self: start; }
   .header-right { justify-self: start; }
 }
+
+.master-settings-btn {
+  background: transparent;
+  border: 1px solid rgba(250, 248, 242, 0.4);
+  color: var(--paper);
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 2px;
+  line-height: 1;
+}
+.master-settings-btn:hover {
+  background: rgba(250, 248, 242, 0.15);
+  border-color: var(--paper);
+}

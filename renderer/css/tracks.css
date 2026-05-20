@@ -471,3 +471,28 @@
   padding: 4px 6px;
   font-size: var(--fs-xs);
 }
+
+.knob-mini.freeze.active {
+  background: #5B7AB8;
+  color: var(--paper);
+  border-color: #5B7AB8;
+}
+.track.frozen .track-clips-area::before {
+  content: 'FROZEN';
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  background: rgba(91, 122, 184, 0.9);
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xxs);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  padding: 3px 8px;
+  border-radius: 2px;
+  z-index: 10;
+  pointer-events: none;
+}
+.track.frozen .track-clip {
+  opacity: 0.55;
+}

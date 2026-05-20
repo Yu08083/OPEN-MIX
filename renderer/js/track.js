@@ -34,6 +34,11 @@ export class Track {
     this.fxOpen = false;
     this.editOpen = false;
 
+    this.customIR = null;
+    this.customIRName = null;
+    this.frozen = false;
+    this.frozenBuffer = null;
+
     this.hpf = null; this.eqL = null; this.eqM = null; this.eqH = null;
     this.comp = null;
     this.chainIn = null; this.chainOut = null;
@@ -104,7 +109,7 @@ export class Track {
     this.dryGain = ctx.createGain();
     this.wetGain = ctx.createGain();
     this.reverb = ctx.createConvolver();
-    this.reverb.buffer = reverbIR;
+    this.reverb.buffer = this.customIR || reverbIR;
     this.gainNode = ctx.createGain();
     this.panNode = ctx.createStereoPanner();
     this.outGain = ctx.createGain();
@@ -178,7 +183,61 @@ export class Track {
     this.outGain.gain.value = audible ? 1 : 0;
   }
 
+  setCustomIR(buffer, name) {
+    this.customIR = buffer;
+    this.customIRName = name;
+    if (this.reverb) this.reverb.buffer = buffer;
+  }
+
+  clearCustomIR(fallbackIR) {
+    this.customIR = null;
+    this.customIRName = null;
+    if (this.reverb && fallbackIR) this.reverb.buffer = fallbackIR;
+  }
+
+  async freeze(engine) {
+    if (this.type !== 'audio') throw new Error('MIDIトラックはフリーズ非対応');
+    const dur = this.effectiveDuration();
+    if (dur <= 0) throw new Error('クリップがないトラックはフリーズできません');
+    const sr = engine.ctx.sampleRate;
+    const off = new OfflineAudioContext(2, Math.ceil(dur * sr), sr);
+    const out = off.createGain();
+    out.connect(off.destination);
+    const ir = this.customIR || engine._makeIR(off, 2.0, 2.5);
+    this.cloneGraphForOffline(off, out, ir, false);
+    const rendered = await off.startRendering();
+    this.frozenBuffer = rendered;
+    this.frozen = true;
+  }
+
+  unfreeze() {
+    this.frozen = false;
+    this.frozenBuffer = null;
+  }
+
+  _scheduleFrozen(ctx, when, globalPos) {
+    if (!this.frozenBuffer) return;
+    const dur = this.frozenBuffer.duration;
+    if (globalPos >= dur) return;
+    const startDelay = 0;
+    const bufOffset = Math.max(0, globalPos);
+    const playDur = dur - bufOffset;
+    const fade = ctx.createGain();
+    fade.gain.value = 1;
+    fade.connect(this.outGain || this.hpf);
+    const src = ctx.createBufferSource();
+    src.buffer = this.frozenBuffer;
+    src.connect(fade);
+    try { src.start(when + startDelay, bufOffset, playDur); } catch (e) {}
+    this.sources.push(src);
+    this.synthNodes.push(fade);
+  }
+
   scheduleClips(ctx, when, globalPos) {
+    if (this.frozen && this.frozenBuffer) {
+      this._scheduleFrozen(ctx, when, globalPos);
+      return;
+    }
     if (this.type === 'audio') {
       for (const clip of this.clips) {
         this._scheduleAudioClip(ctx, clip, when, globalPos);
@@ -326,6 +385,17 @@ export class Track {
   }
 
   cloneGraphForOffline(offCtx, masterDest, ir, anySoloed) {
+    if (this.frozen && this.frozenBuffer) {
+      const audible = this.muted ? false : (anySoloed ? this.soloed : true);
+      if (!audible) return;
+      const g = offCtx.createGain(); g.gain.value = this.gain;
+      g.connect(masterDest);
+      const src = offCtx.createBufferSource();
+      src.buffer = this.frozenBuffer;
+      src.connect(g);
+      src.start(0);
+      return;
+    }
     const hpf = offCtx.createBiquadFilter();
     hpf.type = 'highpass'; hpf.frequency.value = this.hpfFreq; hpf.Q.value = 0.7;
     const eqL = offCtx.createBiquadFilter();
@@ -344,7 +414,8 @@ export class Track {
     const mixIn = offCtx.createGain();
     const dry = offCtx.createGain(); dry.gain.value = 1 - this.reverbMix;
     const wet = offCtx.createGain(); wet.gain.value = this.reverbMix;
-    const reverb = offCtx.createConvolver(); reverb.buffer = ir;
+    const reverb = offCtx.createConvolver();
+    reverb.buffer = this.customIR || ir;
     const gainN = offCtx.createGain(); gainN.gain.value = this.gain;
     const panN = offCtx.createStereoPanner(); panN.pan.value = this.pan;
     const outG = offCtx.createGain();
@@ -430,6 +501,7 @@ export class Track {
       compRelease: this.compRelease,
       reverbMix: this.reverbMix,
       pluginChain: this.pluginChain.map(p => p.serialize()),
+      customIRName: this.customIRName,
       clips: this.clips.map(c => c.serialize()),
     };
   }

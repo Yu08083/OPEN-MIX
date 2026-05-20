@@ -38,6 +38,7 @@ function trackTemplate(track, index) {
         <div class="ms-buttons">
           <button class="knob-mini mute" title="ミュート">M</button>
           <button class="knob-mini solo" title="ソロ">S</button>
+          ${track.type === 'audio' ? '<button class="knob-mini freeze" title="フリーズ（エフェクト込みでバウンス、CPU軽減）">F</button>' : ''}
         </div>
         ${track.type === 'audio' ? '<button class="knob-mini pitch" title="ピッチ補正">ピッチ</button>' : ''}
       </div>
@@ -67,6 +68,11 @@ function trackTemplate(track, index) {
       ])}
       ${fxModule('リバーブ', 'REV', [
         fxParam('ミックス', 'reverbMix', 0, 1, 0.01, track.reverbMix, `${Math.round(track.reverbMix*100)}%`),
+        `<div class="fx-ir-row">
+          <span class="fx-ir-name" data-ir-name>${track.customIRName ? '読込済: ' + escapeHtml(track.customIRName) : '内蔵プロシージャルIR'}</span>
+          <button class="fx-ir-btn" data-ir-load>IR読込</button>
+          <button class="fx-ir-btn" data-ir-clear ${track.customIRName ? '' : 'disabled'}>解除</button>
+        </div>`,
       ])}
       <div class="plugin-chain"></div>
     </div>
@@ -126,6 +132,7 @@ function createClipElement(app, track, clip) {
     <div class="clip-header" title="ドラッグして位置変更">
       <span class="clip-name">${escapeHtml(clip.name)}</span>
       <div class="clip-actions">
+        ${clip.type === 'audio' ? '<button class="clip-action-btn" data-act="harmony" title="ハモリ作成">♬</button>' : ''}
         <button class="clip-action-btn" data-act="split" title="再生位置で分割">⊟</button>
         <button class="clip-action-btn" data-act="duplicate" title="複製">⎘</button>
         <button class="clip-action-btn" data-act="delete" title="削除">×</button>
@@ -161,6 +168,7 @@ function bindClipEvents(app, track, clip, el) {
       if (act === 'split') app.splitClipAtPlayhead(track, clip);
       else if (act === 'duplicate') app.duplicateClip(track, clip);
       else if (act === 'delete') app.deleteClip(track, clip);
+      else if (act === 'harmony') app.openHarmonyForClip(track, clip);
     });
   });
 
@@ -385,6 +393,64 @@ function bindTrackEvents(app, track, el) {
     e.currentTarget.classList.toggle('active', track.soloed);
     app.engine._reapplySolo();
   });
+
+  const freezeBtn = el.querySelector('.knob-mini.freeze');
+  if (freezeBtn) {
+    freezeBtn.classList.toggle('active', track.frozen);
+    freezeBtn.addEventListener('click', async () => {
+      if (track.frozen) {
+        track.unfreeze();
+        freezeBtn.classList.remove('active');
+        el.classList.remove('frozen');
+      } else {
+        if (track.clips.length === 0) { alert('クリップがないためフリーズできません'); return; }
+        app._showOverlay(`「${track.name}」をフリーズ中…`);
+        try {
+          await track.freeze(app.engine);
+          freezeBtn.classList.add('active');
+          el.classList.add('frozen');
+        } catch (err) {
+          alert('フリーズ失敗: ' + err.message);
+        }
+        app._hideOverlay();
+      }
+    });
+  }
+
+  const irLoadBtn = el.querySelector('[data-ir-load]');
+  const irClearBtn = el.querySelector('[data-ir-clear]');
+  const irNameEl = el.querySelector('[data-ir-name]');
+  if (irLoadBtn) {
+    irLoadBtn.addEventListener('click', async () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'audio/wav,audio/x-wav,.wav,audio/*';
+      input.style.display = 'none';
+      input.addEventListener('change', async e => {
+        const f = e.target.files[0];
+        if (!f) return;
+        try {
+          app.engine.ensure();
+          const buf = await app.engine.ctx.decodeAudioData(await f.arrayBuffer());
+          track.setCustomIR(buf, f.name);
+          irNameEl.textContent = '読込済: ' + f.name;
+          irClearBtn.disabled = false;
+        } catch (err) {
+          alert('IR読込失敗: ' + err.message);
+        }
+      });
+      document.body.appendChild(input);
+      input.click();
+      setTimeout(() => input.remove(), 1000);
+    });
+  }
+  if (irClearBtn) {
+    irClearBtn.addEventListener('click', () => {
+      track.clearCustomIR(app.engine.reverbIR);
+      irNameEl.textContent = '内蔵プロシージャルIR';
+      irClearBtn.disabled = true;
+    });
+  }
 
   const pitchBtn = el.querySelector('.knob-mini.pitch');
   if (pitchBtn) {
